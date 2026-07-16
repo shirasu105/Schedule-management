@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="ja" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StudyFlow</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- 今日の集中ゲージ（シグネチャー要素） -->
+  <div id="today-gauge" class="today-gauge">
+    <div class="gauge-inner">
+      <span class="gauge-label">今日の達成</span>
+      <div class="gauge-bar-wrap">
+        <div class="gauge-bar" id="gauge-bar"></div>
+      </div>
+      <span class="gauge-pct" id="gauge-pct">0%</span>
+    </div>
+  </div>
+
+  <!-- メインコンテンツ -->
+  <main class="main-content" id="main-content">
+    <!-- ホーム / 今日のタスク -->
+    <section class="page" id="page-today" data-page="today">
+      <div class="page-header">
+        <h1 class="page-title">今日のタスク</h1>
+        <span class="page-date" id="today-date"></span>
+      </div>
+      <div id="today-task-list" class="task-cards"></div>
+      <div class="empty-state" id="today-empty" style="display:none">
+        <div class="empty-icon">📚</div>
+        <p>今日のタスクはありません</p>
+        <button class="btn-primary" onclick="openAddTask()">タスクを追加</button>
+      </div>
+
+      <div class="section-divider">
+        <span>締切が近いタスク</span>
+      </div>
+      <div id="deadline-list" class="deadline-chips"></div>
+    </section>
+
+    <!-- タスク一覧 -->
+    <section class="page hidden" id="page-tasks" data-page="tasks">
+      <div class="page-header">
+        <h1 class="page-title">タスク一覧</h1>
+        <button class="btn-icon" onclick="openAddTask()" title="追加">＋</button>
+      </div>
+      <div class="filter-bar">
+        <input type="search" id="task-search" placeholder="検索…" oninput="renderTaskList()">
+        <select id="task-filter-status" onchange="renderTaskList()">
+          <option value="all">すべて</option>
+          <option value="active">進行中</option>
+          <option value="completed">完了</option>
+        </select>
+        <select id="task-sort" onchange="renderTaskList()">
+          <option value="deadline">締切順</option>
+          <option value="priority">優先度順</option>
+          <option value="created">作成順</option>
+        </select>
+      </div>
+      <div id="task-list" class="task-cards"></div>
+      <div class="empty-state" id="tasks-empty" style="display:none">
+        <div class="empty-icon">✏️</div>
+        <p>タスクがまだありません</p>
+        <button class="btn-primary" onclick="openAddTask()">最初のタスクを追加</button>
+      </div>
+    </section>
+
+    <!-- カレンダー -->
+    <section class="page hidden" id="page-calendar" data-page="calendar">
+      <div class="page-header">
+        <h1 class="page-title">カレンダー</h1>
+        <div class="cal-view-toggle">
+          <button class="cal-view-btn active" data-view="month" onclick="setCalView('month',this)">月</button>
+          <button class="cal-view-btn" data-view="week" onclick="setCalView('week',this)">週</button>
+          <button class="cal-view-btn" data-view="day" onclick="setCalView('day',this)">日</button>
+        </div>
+      </div>
+      <div class="cal-nav">
+        <button class="btn-icon" onclick="calNav(-1)">‹</button>
+        <span id="cal-title"></span>
+        <button class="btn-icon" onclick="calNav(1)">›</button>
+      </div>
+      <div id="calendar-body"></div>
+    </section>
+
+    <!-- 統計 -->
+    <section class="page hidden" id="page-stats" data-page="stats">
+      <div class="page-header">
+        <h1 class="page-title">統計</h1>
+      </div>
+      <div class="stats-period-toggle">
+        <button class="period-btn active" data-period="today" onclick="setStatPeriod('today',this)">今日</button>
+        <button class="period-btn" data-period="week" onclick="setStatPeriod('week',this)">週間</button>
+        <button class="period-btn" data-period="month" onclick="setStatPeriod('month',this)">月間</button>
+      </div>
+      <div class="stats-grid" id="stats-grid"></div>
+      <div class="chart-wrap">
+        <h3 class="chart-title">直近7日の達成率</h3>
+        <div id="bar-chart" class="bar-chart"></div>
+      </div>
+    </section>
+
+    <!-- 設定 -->
+    <section class="page hidden" id="page-settings" data-page="settings">
+      <div class="page-header">
+        <h1 class="page-title">設定</h1>
+      </div>
+      <div class="settings-list">
+        <div class="setting-item">
+          <span>テーマ</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="theme-toggle" onchange="toggleTheme()">
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            <span class="toggle-label" id="theme-label">ダーク</span>
+          </label>
+        </div>
+        <div class="setting-item">
+          <span>ブラウザ通知</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="notif-toggle" onchange="toggleNotif()">
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            <span class="toggle-label" id="notif-label">オフ</span>
+          </label>
+        </div>
+        <div class="setting-divider"></div>
+        <div class="setting-item">
+          <span>データをエクスポート（JSON）</span>
+          <button class="btn-secondary" onclick="exportData()">書き出し</button>
+        </div>
+        <div class="setting-item">
+          <span>データをインポート</span>
+          <label class="btn-secondary" style="cursor:pointer">
+            読み込み
+            <input type="file" accept=".json" onchange="importData(event)" style="display:none">
+          </label>
+        </div>
+        <div class="setting-item danger">
+          <span>すべてのデータを削除</span>
+          <button class="btn-danger" onclick="clearAllData()">削除</button>
+        </div>
+      </div>
+      <p class="version-tag">StudyFlow v1.0 — Phase 1</p>
+    </section>
+  </main>
+
+  <!-- ボトムナビ -->
+  <nav class="bottom-nav">
+    <button class="nav-btn active" data-page="today" onclick="navigate('today',this)">
+      <span class="nav-icon">🏠</span><span class="nav-label">今日</span>
+    </button>
+    <button class="nav-btn" data-page="tasks" onclick="navigate('tasks',this)">
+      <span class="nav-icon">📋</span><span class="nav-label">タスク</span>
+    </button>
+    <button class="nav-fab" onclick="openAddTask()" title="タスク追加">＋</button>
+    <button class="nav-btn" data-page="calendar" onclick="navigate('calendar',this)">
+      <span class="nav-icon">📅</span><span class="nav-label">カレンダー</span>
+    </button>
+    <button class="nav-btn" data-page="stats" onclick="navigate('stats',this)">
+      <span class="nav-icon">📊</span><span class="nav-label">統計</span>
+    </button>
+  </nav>
+
+  <!-- タスク追加/編集モーダル -->
+  <div class="modal-overlay hidden" id="task-modal" onclick="closeModalOnBg(event)">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="modal-title">タスクを追加</h2>
+        <button class="btn-icon" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="edit-task-id">
+        <div class="field-group">
+          <label>タイトル <span class="req">*</span></label>
+          <input type="text" id="f-title" placeholder="例：英単語テスト対策">
+        </div>
+        <div class="field-row">
+          <div class="field-group">
+            <label>科目</label>
+            <input type="text" id="f-subject" placeholder="例：英語">
+          </div>
+          <div class="field-group">
+            <label>優先度</label>
+            <select id="f-priority">
+              <option value="high">🔴 高</option>
+              <option value="medium" selected>🟡 中</option>
+              <option value="low">🟢 低</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field-group">
+            <label>総量 <span class="req">*</span></label>
+            <input type="number" id="f-total" placeholder="50" min="1">
+          </div>
+          <div class="field-group">
+            <label>単位</label>
+            <input type="text" id="f-unit" placeholder="ページ・問・分">
+          </div>
+        </div>
+        <div class="field-group">
+          <label>締切 <span class="req">*</span></label>
+          <input type="date" id="f-deadline">
+        </div>
+        <div class="field-group">
+          <label>メモ</label>
+          <textarea id="f-memo" placeholder="参考書名・注意点など" rows="2"></textarea>
+        </div>
+
+        <!-- 自動分割プレビュー -->
+        <div class="split-preview" id="split-preview"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal()">キャンセル</button>
+        <button class="btn-primary" onclick="saveTask()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 今日の進捗更新モーダル -->
+  <div class="modal-overlay hidden" id="progress-modal" onclick="closeProgressOnBg(event)">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="prog-modal-title">進捗を更新</h2>
+        <button class="btn-icon" onclick="closeProgressModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="prog-daily-id">
+        <div class="prog-info" id="prog-info"></div>
+        <div class="field-group">
+          <label>完了した量</label>
+          <input type="number" id="prog-amount" min="0" placeholder="0">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeProgressModal()">キャンセル</button>
+        <button class="btn-primary" onclick="saveProgress()">更新</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- トースト通知 -->
+  <div class="toast hidden" id="toast"></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
