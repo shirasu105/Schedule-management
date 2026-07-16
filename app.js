@@ -1,874 +1,1179 @@
-// ============================================================
-//  StudyFlow — Phase 1
-//  app.js  (ES Modules, no framework)
-// ============================================================
+// ===== app.js — メインアプリケーション =====
+import {
+  getTasks, addTask, updateTask, deleteTask,
+  getDailyTasks, getDailyTasksForDate, upsertDailyTask, saveDailyTasks,
+  getRepeatTasks, addRepeatTask, deleteRepeatTask,
+  getTimetable, addPeriod, deletePeriod,
+  getSubjectColors, setSubjectColor, deleteSubjectColor,
+  getSettings, saveSettings,
+  exportAll, importAll, clearAll,
+  generateId, todayStr,
+} from './db.js';
 
-// ─── ユーティリティ ─────────────────────────────────────────
-const $ = id => document.getElementById(id);
-const today = () => new Date().toISOString().slice(0, 10);
-const uid   = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+// ===== State =====
+let editingTaskId = null;
+let progressTaskId = null;
+let calView = 'month';
+let calDate = new Date();
+let statsPeriod = 'week';
 
-function fmtDate(iso) {
-  if (!iso) return '';
-  const d = new Date(iso + 'T00:00:00');
-  return `${d.getMonth()+1}/${d.getDate()}`;
-}
-
-function daysLeft(iso) {
-  if (!iso) return null;
-  const diff = new Date(iso + 'T00:00:00') - new Date(today() + 'T00:00:00');
-  return Math.ceil(diff / 86400000);
-}
-
-function addDays(iso, n) {
-  const d = new Date(iso + 'T00:00:00');
-  d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
-}
-
-// ─── ストレージ ──────────────────────────────────────────────
-const KEYS = { tasks: 'sf_tasks', daily: 'sf_daily', stats: 'sf_stats', settings: 'sf_settings' };
-
-function load(key) {
-  try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; }
-}
-function save(key, val) {
-  localStorage.setItem(key, JSON.stringify(val));
-}
-
-// ─── 状態 ────────────────────────────────────────────────────
-let tasks    = load(KEYS.tasks)    || [];
-let daily    = load(KEYS.daily)    || [];
-let settings = load(KEYS.settings) || { theme: 'dark', notif: false };
-
-// ─── ページナビゲーション ────────────────────────────────────
-let currentPage = 'today';
-
-export function navigate(page, btn) {
-  document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
-  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-  const el = document.getElementById('page-' + page);
-  if (el) el.classList.remove('hidden');
-  if (btn) btn.classList.add('active');
-  currentPage = page;
-  renderPage(page);
-}
-
-function renderPage(page) {
-  if (page === 'today')    renderToday();
-  if (page === 'tasks')    renderTaskList();
-  if (page === 'calendar') renderCalendar();
-  if (page === 'stats')    renderStats();
-  if (page === 'settings') renderSettings();
-}
-
-// グローバルに公開
-window.navigate = navigate;
-
-// ─── タスク CRUD ─────────────────────────────────────────────
-function saveTasks() { save(KEYS.tasks, tasks); }
-function saveDaily()  { save(KEYS.daily, daily); }
-
-function addTask(data) {
-  const task = {
-    id:              uid(),
-    title:           data.title,
-    subject:         data.subject || '',
-    totalAmount:     Number(data.totalAmount),
-    completedAmount: 0,
-    unit:            data.unit || '',
-    deadline:        data.deadline,
-    priority:        data.priority || 'medium',
-    memo:            data.memo || '',
-    status:          'active',
-    createdAt:       new Date().toISOString(),
-    updatedAt:       new Date().toISOString(),
-  };
-  tasks.push(task);
-  saveTasks();
-  generateDailyTasks(task);
-  return task;
-}
-
-function updateTask(id, data) {
-  const idx = tasks.findIndex(t => t.id === id);
-  if (idx < 0) return;
-  Object.assign(tasks[idx], data, { updatedAt: new Date().toISOString() });
-  saveTasks();
-  // daily再生成
-  daily = daily.filter(d => d.taskId !== id);
-  generateDailyTasks(tasks[idx]);
-  saveDaily();
-}
-
-function deleteTask(id) {
-  tasks = tasks.filter(t => t.id !== id);
-  daily = daily.filter(d => d.taskId !== id);
-  saveTasks();
-  saveDaily();
-}
-
-function toggleTaskComplete(id) {
-  const t = tasks.find(t => t.id === id);
-  if (!t) return;
-  t.status = t.status === 'completed' ? 'active' : 'completed';
-  t.updatedAt = new Date().toISOString();
-  if (t.status === 'completed') {
-    t.completedAmount = t.totalAmount;
-    // 今日のdailyも完了に
-    const todayStr = today();
-    daily.filter(d => d.taskId === id && d.date === todayStr)
-         .forEach(d => { d.completedAmount = d.plannedAmount; d.status = 'completed'; });
-  }
-  saveTasks();
-  saveDaily();
-  recordStats();
-}
-
-// ─── 自動分割 ────────────────────────────────────────────────
-function generateDailyTasks(task) {
-  if (task.status === 'completed') return;
-
-  const todayStr = today();
-  const deadline = task.deadline;
-  const remaining = task.totalAmount - task.completedAmount;
-  if (remaining <= 0) return;
-
-  // 今日〜締切の日数
-  const start = todayStr <= deadline ? todayStr : deadline;
-  const days  = Math.max(1, daysLeft(deadline) ?? 1);
-
-  const base   = Math.floor(remaining / days);
-  const extra  = remaining % days;
-
-  for (let i = 0; i < days; i++) {
-    const date   = addDays(todayStr, i);
-    if (date > deadline) break;
-    const planned = base + (i < extra ? 1 : 0);
-    // 既存があればスキップ
-    if (daily.some(d => d.taskId === task.id && d.date === date)) continue;
-    daily.push({
-      id:              uid(),
-      taskId:          task.id,
-      date,
-      plannedAmount:   planned,
-      completedAmount: 0,
-      status:          'pending',
-    });
-  }
-  saveDaily();
-}
-
-// ─── 自動再分配 ──────────────────────────────────────────────
-function redistributeTask(taskId) {
-  const task = tasks.find(t => t.id === taskId);
-  if (!task || task.status === 'completed') return;
-
-  const todayStr = today();
-
-  // 今日より未来のdailyを削除
-  daily = daily.filter(d => !(d.taskId === taskId && d.date > todayStr));
-
-  // 完了量を合計
-  const doneTotal = daily
-    .filter(d => d.taskId === taskId)
-    .reduce((s, d) => s + d.completedAmount, 0);
-
-  task.completedAmount = doneTotal;
-  task.updatedAt = new Date().toISOString();
-  saveTasks();
-
-  // 残りを再分割
-  const remaining = task.totalAmount - doneTotal;
-  if (remaining <= 0) {
-    task.status = 'completed';
-    saveTasks();
-    return;
-  }
-
-  const days = Math.max(1, daysLeft(task.deadline) ?? 1);
-  const base  = Math.floor(remaining / days);
-  const extra = remaining % days;
-
-  for (let i = 0; i < days; i++) {
-    const date = addDays(todayStr, i + 1); // 明日以降
-    if (date > task.deadline) break;
-    const planned = base + (i < extra ? 1 : 0);
-    daily.push({ id: uid(), taskId, date, plannedAmount: planned, completedAmount: 0, status: 'pending' });
-  }
-  saveDaily();
-}
-
-// ─── 統計記録 ────────────────────────────────────────────────
-function recordStats() {
-  const todayStr = today();
-  let statsArr = load(KEYS.stats) || [];
-  const todayDaily = daily.filter(d => d.date === todayStr);
-  const total   = todayDaily.length;
-  const done    = todayDaily.filter(d => d.status === 'completed').length;
-  const rate    = total > 0 ? Math.round(done / total * 100) : 0;
-  const existing = statsArr.findIndex(s => s.date === todayStr);
-  const rec = { date: todayStr, completionRate: rate, completedTasks: done, totalTasks: total };
-  if (existing >= 0) statsArr[existing] = rec;
-  else statsArr.push(rec);
-  save(KEYS.stats, statsArr);
-}
-
-// ─── 今日のタスク描画 ────────────────────────────────────────
-function renderToday() {
-  const todayStr = today();
-  $('today-date').textContent = new Date().toLocaleDateString('ja-JP', { month:'long', day:'numeric', weekday:'short' });
-
-  const todayEntries = daily.filter(d => d.date === todayStr);
-
-  // ゲージ更新
-  const total = todayEntries.length;
-  const done  = todayEntries.filter(d => d.status === 'completed').length;
-  const pct   = total > 0 ? Math.round(done / total * 100) : 0;
-  $('gauge-bar').style.width = pct + '%';
-  $('gauge-pct').textContent = pct + '%';
-
-  const list = $('today-task-list');
-  list.innerHTML = '';
-
-  if (todayEntries.length === 0) {
-    $('today-empty').style.display = '';
-    list.style.display = 'none';
-  } else {
-    $('today-empty').style.display = 'none';
-    list.style.display = '';
-    todayEntries.forEach(entry => {
-      const task = tasks.find(t => t.id === entry.taskId);
-      if (!task) return;
-      const pct = entry.plannedAmount > 0
-        ? Math.min(100, Math.round(entry.completedAmount / entry.plannedAmount * 100))
-        : 0;
-      const isDone = entry.status === 'completed';
-      const card = document.createElement('div');
-      card.className = 'task-card' + (isDone ? ' completed' : '');
-      card.innerHTML = `
-        <div class="task-card-top">
-          <button class="task-check" onclick="toggleDailyDone('${entry.id}')">${isDone ? '✓' : ''}</button>
-          <div class="task-info">
-            <div class="task-title">${esc(task.title)}</div>
-            <div class="task-meta">
-              ${task.subject ? `<span class="tag">${esc(task.subject)}</span>` : ''}
-              <span class="tag priority-${task.priority}">${priorityLabel(task.priority)}</span>
-              ${task.deadline ? `<span class="tag${daysLeft(task.deadline) <= 1 ? ' deadline-near' : ''}">締切 ${fmtDate(task.deadline)}</span>` : ''}
-            </div>
-          </div>
-        </div>
-        <div class="task-progress">
-          <div class="progress-numbers">
-            <span>${entry.completedAmount} / ${entry.plannedAmount} ${esc(task.unit)}</span>
-            <span>${pct}%</span>
-          </div>
-          <div class="progress-bar-wrap"><div class="progress-bar" style="width:${pct}%"></div></div>
-          ${!isDone ? `<div class="progress-update-row"><button class="btn-progress" onclick="openProgressModal('${entry.id}')">進捗を入力</button></div>` : ''}
-        </div>`;
-      list.appendChild(card);
-    });
-  }
-
-  // 締切一覧（今後7日）
-  renderDeadlines();
-}
-
-function renderDeadlines() {
-  const todayStr = today();
-  const soon = tasks
-    .filter(t => t.status !== 'completed' && t.deadline)
-    .filter(t => { const d = daysLeft(t.deadline); return d !== null && d >= 0 && d <= 7; })
-    .sort((a, b) => a.deadline.localeCompare(b.deadline));
-
-  const container = $('deadline-list');
-  container.innerHTML = '';
-  if (soon.length === 0) {
-    container.innerHTML = '<p style="color:var(--sub);font-size:13px">直近の締切はありません</p>';
-    return;
-  }
-  soon.forEach(t => {
-    const d = daysLeft(t.deadline);
-    const chip = document.createElement('div');
-    chip.className = 'deadline-chip' + (d <= 1 ? ' urgent' : '');
-    chip.innerHTML = `
-      <span class="dl-title">${esc(t.title)}</span>
-      <span class="dl-date">${d === 0 ? '今日' : d === 1 ? '明日' : `あと${d}日`}</span>`;
-    container.appendChild(chip);
-  });
-}
-
-// ─── 今日の完了トグル ────────────────────────────────────────
-window.toggleDailyDone = function(dailyId) {
-  const entry = daily.find(d => d.id === dailyId);
-  if (!entry) return;
-  if (entry.status === 'completed') {
-    entry.status = 'pending';
-    entry.completedAmount = 0;
-  } else {
-    entry.status = 'completed';
-    entry.completedAmount = entry.plannedAmount;
-  }
-  saveDaily();
-  redistributeTask(entry.taskId);
-  recordStats();
-  renderToday();
-  showToast(entry.status === 'completed' ? '✅ 完了しました' : '↩ 未完了に戻しました');
-};
-
-// ─── 進捗モーダル ────────────────────────────────────────────
-window.openProgressModal = function(dailyId) {
-  const entry = daily.find(d => d.id === dailyId);
-  if (!entry) return;
-  const task = tasks.find(t => t.id === entry.taskId);
-  $('prog-daily-id').value = dailyId;
-  $('prog-modal-title').textContent = task ? task.title : '進捗を更新';
-  $('prog-amount').value = entry.completedAmount;
-  $('prog-amount').max = entry.plannedAmount;
-  $('prog-info').innerHTML = `
-    <strong>${esc(task?.title || '')}</strong><br>
-    今日の目標: <b>${entry.plannedAmount} ${esc(task?.unit || '')}</b>`;
-  $('progress-modal').classList.remove('hidden');
-  setTimeout(() => $('prog-amount').focus(), 50);
-};
-
-window.closeProgressModal = () => $('progress-modal').classList.add('hidden');
-window.closeProgressOnBg = e => { if (e.target.id === 'progress-modal') closeProgressModal(); };
-
-window.saveProgress = function() {
-  const dailyId = $('prog-daily-id').value;
-  const amount  = Math.max(0, Number($('prog-amount').value));
-  const entry   = daily.find(d => d.id === dailyId);
-  if (!entry) return;
-  entry.completedAmount = amount;
-  entry.status = amount >= entry.plannedAmount ? 'completed' : 'pending';
-  saveDaily();
-  redistributeTask(entry.taskId);
-  recordStats();
-  closeProgressModal();
-  renderToday();
-  showToast('📝 進捗を更新しました');
-};
-
-// ─── タスク一覧描画 ──────────────────────────────────────────
-window.renderTaskList = function() {
-  const q      = ($('task-search')?.value || '').toLowerCase();
-  const status = $('task-filter-status')?.value || 'all';
-  const sort   = $('task-sort')?.value || 'deadline';
-
-  let list = tasks.filter(t => {
-    if (status === 'active'    && t.status === 'completed') return false;
-    if (status === 'completed' && t.status !== 'completed') return false;
-    if (q && !t.title.toLowerCase().includes(q) && !t.subject.toLowerCase().includes(q)) return false;
-    return true;
-  });
-
-  list.sort((a, b) => {
-    if (sort === 'deadline') return (a.deadline || '9999').localeCompare(b.deadline || '9999');
-    if (sort === 'priority') { const o = {high:0,medium:1,low:2}; return o[a.priority] - o[b.priority]; }
-    return b.createdAt.localeCompare(a.createdAt);
-  });
-
-  const container = $('task-list');
-  const empty     = $('tasks-empty');
-  container.innerHTML = '';
-
-  if (list.length === 0) { empty.style.display = ''; container.style.display = 'none'; return; }
-  empty.style.display = 'none'; container.style.display = '';
-
-  list.forEach(t => {
-    const pct = t.totalAmount > 0 ? Math.min(100, Math.round(t.completedAmount / t.totalAmount * 100)) : 0;
-    const dl  = daysLeft(t.deadline);
-    const card = document.createElement('div');
-    card.className = 'task-card' + (t.status === 'completed' ? ' completed' : '');
-    card.innerHTML = `
-      <div class="task-card-top">
-        <button class="task-check" onclick="toggleTaskComplete('${t.id}')">${t.status === 'completed' ? '✓' : ''}</button>
-        <div class="task-info">
-          <div class="task-title">${esc(t.title)}</div>
-          <div class="task-meta">
-            ${t.subject ? `<span class="tag">${esc(t.subject)}</span>` : ''}
-            <span class="tag priority-${t.priority}">${priorityLabel(t.priority)}</span>
-            ${t.deadline ? `<span class="tag${dl !== null && dl <= 3 && t.status !== 'completed' ? ' deadline-near' : ''}">締切 ${fmtDate(t.deadline)}</span>` : ''}
-            <span class="tag">${t.completedAmount}/${t.totalAmount} ${esc(t.unit)}</span>
-          </div>
-        </div>
-        <div class="task-actions">
-          <button class="btn-icon" onclick="openEditTask('${t.id}')" title="編集">✏️</button>
-          <button class="btn-icon" onclick="confirmDelete('${t.id}')" title="削除">🗑️</button>
-        </div>
-      </div>
-      <div class="task-progress" style="margin-top:10px">
-        <div class="progress-bar-wrap"><div class="progress-bar" style="width:${pct}%"></div></div>
-      </div>`;
-    container.appendChild(card);
-  });
-};
-
-window.toggleTaskComplete = function(id) {
-  toggleTaskComplete_internal(id);
-};
-
-function toggleTaskComplete_internal(id) {
-  toggleTaskComplete(id);
-  recordStats();
-  renderPage(currentPage);
-  showToast('✅ ステータスを変更しました');
-}
-
-window.confirmDelete = function(id) {
-  if (confirm('このタスクを削除しますか？')) {
-    deleteTask(id);
-    renderPage(currentPage);
-    showToast('🗑️ 削除しました');
-  }
-};
-
-// ─── タスク追加/編集モーダル ─────────────────────────────────
-window.openAddTask = function() {
-  $('modal-title').textContent = 'タスクを追加';
-  $('edit-task-id').value = '';
-  clearForm();
-  // デフォルト締切を1週間後に
-  const d = new Date(); d.setDate(d.getDate() + 7);
-  $('f-deadline').value = d.toISOString().slice(0, 10);
-  $('task-modal').classList.remove('hidden');
-  setTimeout(() => $('f-title').focus(), 50);
-  updateSplitPreview();
-};
-
-window.openEditTask = function(id) {
-  const t = tasks.find(t => t.id === id);
-  if (!t) return;
-  $('modal-title').textContent = 'タスクを編集';
-  $('edit-task-id').value = id;
-  $('f-title').value    = t.title;
-  $('f-subject').value  = t.subject;
-  $('f-priority').value = t.priority;
-  $('f-total').value    = t.totalAmount;
-  $('f-unit').value     = t.unit;
-  $('f-deadline').value = t.deadline;
-  $('f-memo').value     = t.memo;
-  $('task-modal').classList.remove('hidden');
-  updateSplitPreview();
-};
-
-window.closeModal = () => $('task-modal').classList.add('hidden');
-window.closeModalOnBg = e => { if (e.target.id === 'task-modal') closeModal(); };
-
-function clearForm() {
-  ['f-title','f-subject','f-total','f-unit','f-deadline','f-memo'].forEach(id => $(id).value = '');
-  $('f-priority').value = 'medium';
-}
-
-window.saveTask = function() {
-  const title    = $('f-title').value.trim();
-  const total    = Number($('f-total').value);
-  const deadline = $('f-deadline').value;
-  if (!title)    { shakeInput('f-title');    return; }
-  if (!total)    { shakeInput('f-total');    return; }
-  if (!deadline) { shakeInput('f-deadline'); return; }
-
-  const data = {
-    title,
-    subject:     $('f-subject').value.trim(),
-    priority:    $('f-priority').value,
-    totalAmount: total,
-    unit:        $('f-unit').value.trim(),
-    deadline,
-    memo:        $('f-memo').value.trim(),
-  };
-
-  const editId = $('edit-task-id').value;
-  if (editId) {
-    updateTask(editId, data);
-    showToast('✏️ タスクを更新しました');
-  } else {
-    addTask(data);
-    showToast('✅ タスクを追加しました');
-  }
-  closeModal();
-  renderPage(currentPage);
-  renderToday();
-};
-
-// 分割プレビュー
-function updateSplitPreview() {
-  const total    = Number($('f-total').value);
-  const deadline = $('f-deadline').value;
-  const unit     = $('f-unit').value.trim() || '';
-  const preview  = $('split-preview');
-
-  if (!total || !deadline) { preview.classList.remove('show'); return; }
-  const days = Math.max(1, daysLeft(deadline) ?? 1);
-  const base  = Math.floor(total / days);
-  const extra = total % days;
-
-  const chips = [];
-  for (let i = 0; i < Math.min(days, 7); i++) {
-    chips.push(`<span class="split-chip">${base + (i < extra ? 1 : 0)} ${unit}</span>`);
-  }
-  const more = days > 7 ? `<span class="split-chip">…他 ${days - 7} 日</span>` : '';
-
-  preview.classList.add('show');
-  preview.innerHTML = `
-    <div class="split-title">📅 自動分割プレビュー（${days}日間）</div>
-    <div class="split-chips">${chips.join('') + more}</div>`;
-}
-
-['f-total','f-deadline','f-unit'].forEach(id => {
-  const el = $(id);
-  if (el) el.addEventListener('input', updateSplitPreview);
+// ===== Init =====
+document.addEventListener('DOMContentLoaded', () => {
+  applySettings();
+  setupNav();
+  setupModals();
+  setupSettings();
+  setupCalendar();
+  setupStats();
+  setupRepeat();
+  setupTimetable();
+  generateTodayDailyTasks();
+  renderHome();
+  renderTasks();
+  updateDateBadge();
+  initTaskFilters();
+  // 通知許可済みなら起動時チェック
+  if (Notification.permission === 'granted') scheduleNotifications();
 });
 
-function shakeInput(id) {
-  const el = $(id);
-  if (!el) return;
-  el.style.borderColor = 'var(--red)';
-  el.focus();
-  setTimeout(() => el.style.borderColor = '', 1500);
+// ===== Settings =====
+function applySettings() {
+  const s = getSettings();
+  if (s.theme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+  const toggle = document.getElementById('darkModeToggle');
+  if (toggle) toggle.checked = s.theme === 'dark';
 }
 
-// ─── カレンダー ──────────────────────────────────────────────
-let calCursor = new Date();
-let calView   = 'month';
-
-window.setCalView = function(view, btn) {
-  calView = view;
-  document.querySelectorAll('.cal-view-btn').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  renderCalendar();
-};
-
-window.calNav = function(dir) {
-  if (calView === 'month') calCursor.setMonth(calCursor.getMonth() + dir);
-  if (calView === 'week')  calCursor.setDate(calCursor.getDate() + dir * 7);
-  if (calView === 'day')   calCursor.setDate(calCursor.getDate() + dir);
-  renderCalendar();
-};
-
-function renderCalendar() {
-  const body = $('calendar-body');
-  const title = $('cal-title');
-  if (!body) return;
-
-  if (calView === 'month') renderMonthCal(body, title);
-  if (calView === 'week')  renderWeekCal(body, title);
-  if (calView === 'day')   renderDayCal(body, title);
-}
-
-function renderMonthCal(body, title) {
-  const y = calCursor.getFullYear();
-  const m = calCursor.getMonth();
-  title.textContent = `${y}年 ${m + 1}月`;
-
-  const first = new Date(y, m, 1);
-  const last  = new Date(y, m + 1, 0);
-  const startDow = first.getDay();
-  const todayStr = today();
-
-  let html = '<div class="cal-month-grid">';
-  ['日','月','火','水','木','金','土'].forEach(d => {
-    html += `<div class="cal-weekday">${d}</div>`;
+function setupSettings() {
+  document.getElementById('darkModeToggle').addEventListener('change', (e) => {
+    const theme = e.target.checked ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', theme);
+    const s = getSettings(); s.theme = theme; saveSettings(s);
   });
 
-  // 空白
-  for (let i = 0; i < startDow; i++) html += '<div class="cal-day other-month"></div>';
-
-  for (let d = 1; d <= last.getDate(); d++) {
-    const dateStr = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-    const isToday = dateStr === todayStr;
-    const dayEntries = daily.filter(e => e.date === dateStr);
-    const dots = dayEntries.slice(0, 3).map(e => {
-      const isDone = e.status === 'completed';
-      return `<span class="cal-dot${isDone ? ' done' : ''}"></span>`;
-    }).join('');
-
-    html += `<div class="cal-day${isToday ? ' today' : ''}" onclick="calSelectDay('${dateStr}')">
-      <span class="cal-day-num">${d}</span>
-      ${dots ? `<div class="cal-dot-row">${dots}</div>` : ''}
-    </div>`;
+  const notifBtn = document.getElementById('notifBtn');
+  // 初期状態
+  if (Notification.permission === 'granted') {
+    notifBtn.textContent = '許可済み ✓';
+    notifBtn.classList.add('btn-notif-granted');
+    notifBtn.disabled = true;
   }
-  html += '</div>';
-  body.innerHTML = html;
-}
-
-window.calSelectDay = function(dateStr) {
-  // 日ビューへジャンプ
-  calCursor = new Date(dateStr + 'T00:00:00');
-  setCalView('day', document.querySelector('[data-view="day"]'));
-};
-
-function renderWeekCal(body, title) {
-  const dow = calCursor.getDay();
-  const monday = new Date(calCursor);
-  monday.setDate(monday.getDate() - dow);
-  const sunday = new Date(monday); sunday.setDate(sunday.getDate() + 6);
-
-  title.textContent = `${fmtDate(monday.toISOString().slice(0,10))} 〜 ${fmtDate(sunday.toISOString().slice(0,10))}`;
-  const todayStr = today();
-  let html = '<div class="cal-day-list">';
-
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(monday); d.setDate(d.getDate() + i);
-    const dateStr = d.toISOString().slice(0, 10);
-    const isToday = dateStr === todayStr;
-    const entries = daily.filter(e => e.date === dateStr);
-    const dow2 = ['日','月','火','水','木','金','土'][d.getDay()];
-
-    let taskHtml = entries.length
-      ? entries.map(e => {
-          const t = tasks.find(t => t.id === e.taskId);
-          return `<div class="cal-task-pill${e.status === 'completed' ? ' done' : ''}">${esc(t?.title || '')} ${e.plannedAmount}${esc(t?.unit || '')}</div>`;
-        }).join('')
-      : '<div style="color:var(--sub);font-size:12px;padding:4px 0">予定なし</div>';
-
-    html += `<div class="cal-day-row">
-      <div class="cal-day-label${isToday ? ' today-label' : ''}">${m2(d.getMonth()+1)}/${m2(d.getDate())}<br>${dow2}</div>
-      <div class="cal-day-tasks">${taskHtml}</div>
-    </div>`;
-  }
-  html += '</div>';
-  body.innerHTML = html;
-}
-
-function renderDayCal(body, title) {
-  const dateStr = calCursor.toISOString().slice(0, 10);
-  const d = calCursor;
-  const dow = ['日','月','火','水','木','金','土'][d.getDay()];
-  title.textContent = `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日（${dow}）`;
-
-  const entries = daily.filter(e => e.date === dateStr);
-  let html = '<div class="cal-day-list">';
-  if (entries.length === 0) {
-    html += '<p style="color:var(--sub);font-size:14px;padding:20px 0">この日の予定はありません</p>';
-  } else {
-    entries.forEach(e => {
-      const t = tasks.find(t => t.id === e.taskId);
-      html += `<div class="cal-task-pill${e.status === 'completed' ? ' done' : ''}">
-        <div style="font-weight:600">${esc(t?.title || '')}</div>
-        <div style="font-size:12px;color:var(--sub);margin-top:2px">${e.plannedAmount} ${esc(t?.unit || '')} ${t?.subject ? '— ' + esc(t.subject) : ''}</div>
-      </div>`;
-    });
-  }
-  html += '</div>';
-  body.innerHTML = html;
-}
-
-// ─── 統計 ────────────────────────────────────────────────────
-let statPeriod = 'today';
-
-window.setStatPeriod = function(period, btn) {
-  statPeriod = period;
-  document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  renderStats();
-};
-
-function renderStats() {
-  const todayStr = today();
-  let entries;
-
-  if (statPeriod === 'today') {
-    entries = daily.filter(d => d.date === todayStr);
-  } else if (statPeriod === 'week') {
-    const start = addDays(todayStr, -6);
-    entries = daily.filter(d => d.date >= start && d.date <= todayStr);
-  } else {
-    const d = new Date(todayStr); d.setDate(1);
-    entries = daily.filter(e => e.date >= d.toISOString().slice(0,10) && e.date <= todayStr);
-  }
-
-  const total    = entries.length;
-  const done     = entries.filter(d => d.status === 'completed').length;
-  const pending  = total - done;
-  const rate     = total > 0 ? Math.round(done / total * 100) : 0;
-  const studyAmt = entries.reduce((s, d) => s + d.completedAmount, 0);
-
-  const grid = $('stats-grid');
-  grid.innerHTML = `
-    <div class="stat-card"><div class="stat-value">${rate}<span style="font-size:20px">%</span></div><div class="stat-label">達成率</div></div>
-    <div class="stat-card"><div class="stat-value green">${done}</div><div class="stat-label">完了</div></div>
-    <div class="stat-card"><div class="stat-value yellow">${pending}</div><div class="stat-label">未完了</div></div>
-    <div class="stat-card"><div class="stat-value">${studyAmt}</div><div class="stat-label">学習量合計</div></div>`;
-
-  renderBarChart();
-}
-
-function renderBarChart() {
-  const todayStr = today();
-  const statsArr = load(KEYS.stats) || [];
-  const chart = $('bar-chart');
-  chart.innerHTML = '';
-
-  for (let i = 6; i >= 0; i--) {
-    const date = addDays(todayStr, -i);
-    const rec  = statsArr.find(s => s.date === date);
-    const rate = rec ? rec.completionRate : 0;
-    const d    = new Date(date + 'T00:00:00');
-    const dow  = ['日','月','火','水','木','金','土'][d.getDay()];
-
-    const col = document.createElement('div');
-    col.className = 'bar-col';
-    col.innerHTML = `
-      <div class="bar-fill" style="height:${rate}%"></div>
-      <div class="bar-day-label">${dow}</div>`;
-    chart.appendChild(col);
-  }
-}
-
-// ─── 設定 ────────────────────────────────────────────────────
-function renderSettings() {
-  const themeToggle = $('theme-toggle');
-  const themeLabel  = $('theme-label');
-  const notifToggle = $('notif-toggle');
-  const notifLabel  = $('notif-label');
-  if (!themeToggle) return;
-
-  const isDark = settings.theme === 'dark';
-  themeToggle.checked = !isDark; // checked = ライト
-  themeLabel.textContent = isDark ? 'ダーク' : 'ライト';
-
-  notifToggle.checked = settings.notif;
-  notifLabel.textContent = settings.notif ? 'オン' : 'オフ';
-}
-
-window.toggleTheme = function() {
-  settings.theme = $('theme-toggle').checked ? 'light' : 'dark';
-  document.documentElement.setAttribute('data-theme', settings.theme);
-  $('theme-label').textContent = settings.theme === 'dark' ? 'ダーク' : 'ライト';
-  save(KEYS.settings, settings);
-};
-
-window.toggleNotif = function() {
-  if ($('notif-toggle').checked) {
+  notifBtn.addEventListener('click', () => {
     Notification.requestPermission().then(p => {
-      settings.notif = p === 'granted';
-      $('notif-toggle').checked = settings.notif;
-      $('notif-label').textContent = settings.notif ? 'オン' : 'オフ';
-      save(KEYS.settings, settings);
-      if (settings.notif) scheduleNotifications();
-    });
-  } else {
-    settings.notif = false;
-    $('notif-label').textContent = 'オフ';
-    save(KEYS.settings, settings);
-  }
-};
-
-window.exportData = function() {
-  const data = { tasks, daily, stats: load(KEYS.stats) || [] };
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `studyflow-${today()}.json`;
-  a.click();
-  showToast('📤 エクスポートしました');
-};
-
-window.importData = function(e) {
-  const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = ev => {
-    try {
-      const data = JSON.parse(ev.target.result);
-      if (data.tasks) { tasks = data.tasks; save(KEYS.tasks, tasks); }
-      if (data.daily) { daily = data.daily; save(KEYS.daily, daily); }
-      if (data.stats) save(KEYS.stats, data.stats);
-      renderPage(currentPage);
-      renderToday();
-      showToast('📥 インポートしました');
-    } catch { showToast('❌ ファイルの形式が正しくありません'); }
-  };
-  reader.readAsText(file);
-};
-
-window.clearAllData = function() {
-  if (!confirm('すべてのデータを削除します。この操作は取り消せません。')) return;
-  Object.values(KEYS).forEach(k => localStorage.removeItem(k));
-  tasks = []; daily = [];
-  renderToday();
-  renderPage(currentPage);
-  showToast('🗑️ データを削除しました');
-};
-
-// ─── 通知 ────────────────────────────────────────────────────
-function scheduleNotifications() {
-  if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  const todayStr = today();
-  const todayEntries = daily.filter(d => d.date === todayStr && d.status !== 'completed');
-  if (todayEntries.length > 0) {
-    new Notification('StudyFlow', {
-      body: `今日のタスクが ${todayEntries.length} 件あります。`,
-      icon: 'https://fonts.gstatic.com/s/i/materialiconsround/school/v16/24px.svg',
-    });
-  }
-}
-
-// ─── トースト ────────────────────────────────────────────────
-let toastTimer;
-function showToast(msg) {
-  const t = $('toast');
-  t.textContent = msg;
-  t.classList.remove('hidden');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.add('hidden'), 2200);
-}
-window.showToast = showToast;
-
-// ─── ヘルパー ────────────────────────────────────────────────
-function esc(str) {
-  return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-function m2(n) { return String(n).padStart(2, '0'); }
-function priorityLabel(p) {
-  return p === 'high' ? '🔴 高' : p === 'medium' ? '🟡 中' : '🟢 低';
-}
-
-// toggleTaskCompleteをグローバルに再定義（内部関数と衝突を避ける）
-window.toggleTaskComplete = function(id) {
-  const t = tasks.find(t => t.id === id);
-  if (!t) return;
-  t.status = t.status === 'completed' ? 'active' : 'completed';
-  t.updatedAt = new Date().toISOString();
-  if (t.status === 'completed') {
-    t.completedAmount = t.totalAmount;
-    const todayStr = today();
-    daily.filter(d => d.taskId === id && d.date === todayStr)
-         .forEach(d => { d.completedAmount = d.plannedAmount; d.status = 'completed'; });
-  }
-  saveTasks();
-  saveDaily();
-  recordStats();
-  renderPage(currentPage);
-  renderToday();
-  showToast('✅ ステータスを変更しました');
-};
-
-// ─── 初期化 ──────────────────────────────────────────────────
-function init() {
-  // テーマ適用
-  document.documentElement.setAttribute('data-theme', settings.theme || 'dark');
-
-  // 既存タスクのdaily補完
-  tasks.forEach(t => {
-    if (t.status !== 'completed') {
-      const todayStr = today();
-      if (!daily.some(d => d.taskId === t.id && d.date === todayStr)) {
-        generateDailyTasks(t);
+      if (p === 'granted') {
+        notifBtn.textContent = '許可済み ✓';
+        notifBtn.classList.add('btn-notif-granted');
+        notifBtn.disabled = true;
+        scheduleNotifications();
       }
+      showToast(p === 'granted' ? '通知を許可しました' : '通知が許可されませんでした', p === 'granted' ? 'success' : 'danger');
+    });
+  });
+
+  // Export
+  document.getElementById('exportBtn').addEventListener('click', () => {
+    const data = exportAll();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `studyflow_backup_${todayStr()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('データをエクスポートしました', 'success');
+  });
+
+  // Import
+  document.getElementById('importFile').addEventListener('change', (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        importAll(data);
+        showToast('データをインポートしました', 'success');
+        setTimeout(() => location.reload(), 800);
+      } catch {
+        showToast('ファイルの読み込みに失敗しました', 'danger');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  });
+
+  // Clear
+  document.getElementById('clearDataBtn').addEventListener('click', () => {
+    if (confirm('全データを削除しますか？この操作は元に戻せません。')) {
+      clearAll();
+      showToast('データを削除しました', 'danger');
+      setTimeout(() => location.reload(), 800);
     }
   });
 
-  // 通知
-  if (settings.notif) scheduleNotifications();
+  // Subject Colors (Phase2)
+  document.getElementById('addSubjectColorBtn').addEventListener('click', () => {
+    document.getElementById('scSubject').value = '';
+    document.getElementById('scColor').value = '#4f46e5';
+    openModal('subjectColorModal');
+  });
+  document.getElementById('scModalClose').addEventListener('click', () => closeModal('subjectColorModal'));
+  document.getElementById('scModalCancel').addEventListener('click', () => closeModal('subjectColorModal'));
+  document.getElementById('scModalSave').addEventListener('click', () => {
+    const subj = document.getElementById('scSubject').value.trim();
+    const color = document.getElementById('scColor').value;
+    if (!subj) { showToast('科目名を入力してください', 'danger'); return; }
+    setSubjectColor(subj, color);
+    renderSubjectColors();
+    closeModal('subjectColorModal');
+    showToast('カラーを設定しました', 'success');
+  });
 
-  // 初期ページ
-  renderToday();
-
-  // ナビゲーションのアクティブ設定
-  document.querySelector('[data-page="today"].nav-btn')?.classList.add('active');
+  renderSubjectColors();
 }
 
-init();
+function renderSubjectColors() {
+  const map = getSubjectColors();
+  const container = document.getElementById('subjectColors');
+  container.innerHTML = '';
+  Object.entries(map).forEach(([subj, color]) => {
+    const row = document.createElement('div');
+    row.className = 'subject-color-item';
+    row.innerHTML = `
+      <div class="subject-color-swatch" style="background:${color}"></div>
+      <span style="flex:1">${subj}</span>
+      <button class="btn btn-icon btn-sm" data-subj="${subj}" title="削除">✕</button>
+    `;
+    row.querySelector('button').addEventListener('click', () => {
+      deleteSubjectColor(subj);
+      renderSubjectColors();
+      renderTasks();
+    });
+    container.appendChild(row);
+  });
+}
+
+// ===== Navigation =====
+function setupNav() {
+  document.querySelectorAll('.nav-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      e.preventDefault();
+      const page = item.dataset.page;
+      navigateTo(page);
+      if (window.innerWidth <= 768) document.getElementById('sidebar').classList.remove('open');
+    });
+  });
+
+  document.getElementById('sidebarToggle').addEventListener('click', () => {
+    document.getElementById('sidebar').classList.toggle('open');
+  });
+
+  // Close sidebar when clicking outside
+  document.getElementById('main').addEventListener('click', () => {
+    if (window.innerWidth <= 768) document.getElementById('sidebar').classList.remove('open');
+  });
+}
+
+function navigateTo(page) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+  document.getElementById(`page-${page}`)?.classList.add('active');
+  document.querySelector(`[data-page="${page}"]`)?.classList.add('active');
+
+  if (page === 'home') { renderHome(); generateTodayDailyTasks(); }
+  if (page === 'tasks') renderTasks();
+  if (page === 'calendar') renderCalendar();
+  if (page === 'stats') renderStats();
+  if (page === 'repeat') renderRepeat();
+  if (page === 'timetable') renderTimetable();
+}
+
+// ===== Task Modal =====
+function setupModals() {
+  const addBtns = [document.getElementById('addTaskBtn'), document.getElementById('addTaskBtn2')];
+  addBtns.forEach(btn => btn?.addEventListener('click', () => openTaskModal()));
+  document.getElementById('modalClose').addEventListener('click', () => closeModal('taskModal'));
+  document.getElementById('modalCancel').addEventListener('click', () => closeModal('taskModal'));
+  document.getElementById('modalSave').addEventListener('click', saveTaskFromModal);
+
+  // Click outside to close
+  document.querySelectorAll('.modal-overlay').forEach(overlay => {
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.classList.add('hidden');
+    });
+  });
+
+  // Progress modal
+  document.getElementById('progressModalClose').addEventListener('click', () => closeModal('progressModal'));
+  document.getElementById('progressModalCancel').addEventListener('click', () => closeModal('progressModal'));
+  document.getElementById('progressModalSave').addEventListener('click', saveProgress);
+}
+
+function openTaskModal(id = null) {
+  editingTaskId = id;
+  const modal = document.getElementById('taskModal');
+  document.getElementById('modalTitle').textContent = id ? 'タスク編集' : 'タスク追加';
+
+  // Reset
+  document.getElementById('taskTitle').value = '';
+  document.getElementById('taskSubject').value = '';
+  document.getElementById('taskPriority').value = 'medium';
+  document.getElementById('taskTotal').value = '';
+  document.getElementById('taskUnit').value = '';
+  document.getElementById('taskDeadline').value = '';
+  document.getElementById('taskMemo').value = '';
+
+  if (id) {
+    const task = getTasks().find(t => t.id === id);
+    if (task) {
+      document.getElementById('taskTitle').value = task.title;
+      document.getElementById('taskSubject').value = task.subject || '';
+      document.getElementById('taskPriority').value = task.priority;
+      document.getElementById('taskTotal').value = task.totalAmount || '';
+      document.getElementById('taskUnit').value = task.unit || '';
+      document.getElementById('taskDeadline').value = task.deadline || '';
+      document.getElementById('taskMemo').value = task.memo || '';
+    }
+  }
+
+  // Populate subject datalist
+  const subjects = [...new Set(getTasks().map(t => t.subject).filter(Boolean))];
+  const dl = document.getElementById('subjectList');
+  dl.innerHTML = subjects.map(s => `<option value="${s}">`).join('');
+
+  openModal('taskModal');
+}
+
+function saveTaskFromModal() {
+  const title = document.getElementById('taskTitle').value.trim();
+  if (!title) { showToast('タイトルを入力してください', 'danger'); return; }
+
+  const totalAmount = parseFloat(document.getElementById('taskTotal').value) || 0;
+  const deadline = document.getElementById('taskDeadline').value;
+  const now = new Date().toISOString();
+
+  if (editingTaskId) {
+    updateTask(editingTaskId, {
+      title,
+      subject: document.getElementById('taskSubject').value.trim(),
+      priority: document.getElementById('taskPriority').value,
+      totalAmount,
+      unit: document.getElementById('taskUnit').value.trim(),
+      deadline,
+      memo: document.getElementById('taskMemo').value.trim(),
+    });
+    // 既存DailyTask再計算
+    redistributeDailyTasks(editingTaskId);
+    showToast('タスクを更新しました', 'success');
+  } else {
+    const task = {
+      id: generateId(),
+      title,
+      subject: document.getElementById('taskSubject').value.trim(),
+      priority: document.getElementById('taskPriority').value,
+      totalAmount,
+      completedAmount: 0,
+      unit: document.getElementById('taskUnit').value.trim(),
+      deadline,
+      memo: document.getElementById('taskMemo').value.trim(),
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    };
+    addTask(task);
+    if (totalAmount && deadline) createDailyTasks(task);
+    showToast('タスクを追加しました', 'success');
+  }
+
+  closeModal('taskModal');
+  renderHome();
+  renderTasks();
+  if (document.getElementById('page-calendar').classList.contains('active')) renderCalendar();
+}
+
+// ===== Daily Task Auto-Split =====
+function createDailyTasks(task) {
+  if (!task.totalAmount || !task.deadline) return;
+  const today = todayStr();
+  const days = dateDiffDays(today, task.deadline) + 1;
+  if (days <= 0) return;
+
+  const perDay = Math.floor(task.totalAmount / days);
+  const remainder = task.totalAmount - perDay * days;
+  const existing = getDailyTasks();
+
+  for (let i = 0; i < days; i++) {
+    const date = addDays(today, i);
+    const amount = i === days - 1 ? perDay + remainder : perDay;
+    if (amount <= 0) continue;
+    existing.push({
+      id: generateId(),
+      taskId: task.id,
+      date,
+      plannedAmount: amount,
+      completedAmount: 0,
+      status: 'pending',
+    });
+  }
+  saveDailyTasks(existing);
+}
+
+function redistributeDailyTasks(taskId) {
+  const task = getTasks().find(t => t.id === taskId);
+  if (!task) return;
+  const today = todayStr();
+
+  // 今日以降のDailyTaskを削除
+  const list = getDailyTasks().filter(d => !(d.taskId === taskId && d.date >= today));
+  saveDailyTasks(list);
+
+  // 完了済み量を計算
+  const completed = getDailyTasks()
+    .filter(d => d.taskId === taskId)
+    .reduce((s, d) => s + (d.completedAmount || 0), 0);
+
+  const remaining = (task.totalAmount || 0) - completed;
+  if (remaining <= 0 || !task.deadline) return;
+
+  const days = dateDiffDays(today, task.deadline) + 1;
+  if (days <= 0) return;
+
+  const perDay = Math.floor(remaining / days);
+  const rem2 = remaining - perDay * days;
+  const newList = getDailyTasks();
+
+  for (let i = 0; i < days; i++) {
+    const date = addDays(today, i);
+    const amount = i === days - 1 ? perDay + rem2 : perDay;
+    if (amount <= 0) continue;
+    newList.push({ id: generateId(), taskId, date, plannedAmount: amount, completedAmount: 0, status: 'pending' });
+  }
+  saveDailyTasks(newList);
+}
+
+function generateTodayDailyTasks() {
+  // 繰り返しタスクから今日分を生成 (Phase2)
+  const today = todayStr();
+  const todayDow = new Date().getDay();
+  const repeatTasks = getRepeatTasks();
+  const existing = getDailyTasks();
+
+  repeatTasks.forEach(rt => {
+    if (!rt.days.includes(todayDow)) return;
+    const alreadyExists = existing.some(d => d.taskId === rt.id && d.date === today);
+    if (alreadyExists) return;
+    existing.push({
+      id: generateId(),
+      taskId: rt.id,
+      date: today,
+      plannedAmount: rt.amount,
+      completedAmount: 0,
+      status: 'pending',
+      isRepeat: true,
+    });
+  });
+  saveDailyTasks(existing);
+}
+
+// ===== Home Render =====
+function renderHome() {
+  const today = todayStr();
+  const allTasks = getTasks();
+  const dailyToday = getDailyTasksForDate(today);
+
+  // Stats
+  const activeTasks = allTasks.filter(t => t.status === 'active');
+  const completedToday = dailyToday.filter(d => d.status === 'done' || d.completedAmount >= d.plannedAmount);
+  const rate = dailyToday.length ? Math.round(completedToday.length / dailyToday.length * 100) : 0;
+
+  document.getElementById('todayRate').textContent = rate + '%';
+  document.getElementById('todayProgress').style.width = rate + '%';
+  document.getElementById('completedCount').textContent = completedToday.length;
+  document.getElementById('remainingCount').textContent = dailyToday.length - completedToday.length;
+  document.getElementById('todayTaskCount').textContent = dailyToday.length + '件';
+
+  // Week rate
+  const weekRate = calcWeekRate();
+  document.getElementById('weekRate').textContent = weekRate + '%';
+
+  // Streak (Phase2)
+  const streak = renderStreakWidget();
+  const streakEl = document.getElementById('streakCount');
+  if (streakEl) streakEl.innerHTML = `${streak}<span class="stat-unit">日</span>`;
+
+  // Today tasks
+  const container = document.getElementById('todayTasks');
+  const empty = document.getElementById('todayEmpty');
+  container.innerHTML = '';
+
+  if (dailyToday.length === 0) {
+    empty.classList.remove('hidden');
+  } else {
+    empty.classList.add('hidden');
+    dailyToday.forEach(dt => {
+      const task = allTasks.find(t => t.id === dt.taskId);
+      if (!task) return;
+      container.appendChild(createTodayTaskCard(task, dt));
+    });
+  }
+
+  // Urgent tasks (3日以内)
+  const urgentContainer = document.getElementById('urgentTasks');
+  const urgentEmpty = document.getElementById('urgentEmpty');
+  const urgentTasks = activeTasks
+    .filter(t => t.deadline && dateDiffDays(today, t.deadline) <= 3 && dateDiffDays(today, t.deadline) >= 0)
+    .sort((a, b) => a.deadline.localeCompare(b.deadline));
+
+  urgentContainer.innerHTML = '';
+  if (urgentTasks.length === 0) {
+    urgentEmpty.classList.remove('hidden');
+  } else {
+    urgentEmpty.classList.add('hidden');
+    urgentTasks.forEach(t => urgentContainer.appendChild(createTaskCard(t)));
+  }
+}
+
+function createTodayTaskCard(task, dt) {
+  const div = document.createElement('div');
+  const isDone = dt.status === 'done' || (dt.completedAmount >= dt.plannedAmount && dt.plannedAmount > 0);
+  div.className = 'task-card' + (isDone ? ' completed' : '');
+
+  const color = getSubjectColor(task.subject);
+  const pct = dt.plannedAmount ? Math.min(100, Math.round(dt.completedAmount / dt.plannedAmount * 100)) : 0;
+  const deadlineText = task.deadline ? formatDeadline(task.deadline) : '';
+
+  div.innerHTML = `
+    <div class="task-subject-bar" style="background:${color}"></div>
+    <div class="task-main">
+      <div class="task-title">${task.title}</div>
+      <div class="task-meta">
+        ${task.subject ? `<span class="task-tag tag-subject" style="background:${color}20;color:${color}">${task.subject}</span>` : ''}
+        ${task.unit ? `<span class="task-tag">今日: ${dt.completedAmount}/${dt.plannedAmount}${task.unit}</span>` : ''}
+        ${deadlineText ? `<span class="task-tag tag-deadline">📅 ${deadlineText}</span>` : ''}
+        <span class="task-tag tag-${task.priority}">${priorityLabel(task.priority)}</span>
+      </div>
+      ${dt.plannedAmount ? `
+      <div class="task-progress">
+        <div class="task-progress-text">${pct}% 完了</div>
+        <div class="task-progress-bar"><div class="task-progress-fill" style="width:${pct}%;background:${color}"></div></div>
+      </div>` : ''}
+    </div>
+    <div class="task-actions">
+      ${!isDone ? `<button class="btn btn-icon" title="進捗を記録" data-dtid="${dt.id}" data-tid="${task.id}">✏️</button>` : ''}
+      <button class="btn btn-icon" title="${isDone ? '未完了に戻す' : '完了にする'}" data-complete="${dt.id}" data-done="${isDone}">
+        ${isDone ? '↩️' : '✅'}
+      </button>
+    </div>
+  `;
+
+  div.querySelector('[data-complete]')?.addEventListener('click', (e) => {
+    const done = e.currentTarget.dataset.done === 'true';
+    const dtId = e.currentTarget.dataset.complete;
+    toggleDailyTaskDone(dtId, !done);
+    renderHome();
+  });
+  div.querySelector('[data-dtid]')?.addEventListener('click', (e) => {
+    openProgressModal(e.currentTarget.dataset.tid, e.currentTarget.dataset.dtid);
+  });
+
+  return div;
+}
+
+function toggleDailyTaskDone(dtId, done) {
+  const list = getDailyTasks();
+  const dt = list.find(d => d.id === dtId);
+  if (!dt) return;
+  dt.status = done ? 'done' : 'pending';
+  if (done) dt.completedAmount = dt.plannedAmount;
+  else dt.completedAmount = 0;
+  saveDailyTasks(list);
+
+  // タスク全体の進捗も更新
+  const taskDailyList = list.filter(d => d.taskId === dt.taskId);
+  const totalCompleted = taskDailyList.reduce((s, d) => s + (d.completedAmount || 0), 0);
+  const task = getTasks().find(t => t.id === dt.taskId);
+  if (task) {
+    updateTask(dt.taskId, {
+      completedAmount: totalCompleted,
+      status: totalCompleted >= task.totalAmount ? 'completed' : 'active',
+    });
+    if (done && totalCompleted >= task.totalAmount) showToast(`🎉 「${task.title}」を完了しました！`, 'success');
+  }
+}
+
+// ===== Progress Modal =====
+function openProgressModal(taskId, dtId) {
+  progressTaskId = { taskId, dtId };
+  const task = getTasks().find(t => t.id === taskId);
+  const dt = getDailyTasks().find(d => d.id === dtId);
+  if (!task || !dt) return;
+
+  document.getElementById('progressTaskTitle').textContent = task.title;
+  document.getElementById('progressAmount').value = dt.completedAmount || '';
+  document.getElementById('progressUnit').textContent = task.unit || '';
+
+  const remaining = (task.totalAmount || 0) - (task.completedAmount || 0);
+  document.getElementById('progressInfo').innerHTML = `
+    今日の目標: ${dt.plannedAmount}${task.unit || ''}<br>
+    全体の残り: ${remaining}${task.unit || ''} / ${task.totalAmount}${task.unit || ''}
+  `;
+  openModal('progressModal');
+}
+
+function saveProgress() {
+  if (!progressTaskId) return;
+  const { taskId, dtId } = progressTaskId;
+  const amount = parseFloat(document.getElementById('progressAmount').value) || 0;
+  const list = getDailyTasks();
+  const dt = list.find(d => d.id === dtId);
+  if (!dt) return;
+  dt.completedAmount = amount;
+  dt.status = amount >= dt.plannedAmount ? 'done' : 'pending';
+  saveDailyTasks(list);
+
+  // タスク全体の完了量を再計算
+  const totalCompleted = list.filter(d => d.taskId === taskId).reduce((s, d) => s + (d.completedAmount || 0), 0);
+  const task = getTasks().find(t => t.id === taskId);
+  updateTask(taskId, { completedAmount: totalCompleted, status: totalCompleted >= (task?.totalAmount || 0) ? 'completed' : 'active' });
+
+  // 未完了分を残り日数で再配分
+  redistributeDailyTasks(taskId);
+
+  closeModal('progressModal');
+  renderHome();
+  showToast('進捗を更新しました', 'success');
+}
+
+// ===== Task List Render =====
+function renderTasks() {
+  const search = document.getElementById('searchInput')?.value.toLowerCase() || '';
+  const subjectFilter = document.getElementById('filterSubject')?.value || '';
+  const statusFilter = document.getElementById('filterStatus')?.value || '';
+  const sortBy = document.getElementById('sortBy')?.value || 'deadline';
+
+  let tasks = getTasks();
+  if (search) tasks = tasks.filter(t => t.title.toLowerCase().includes(search) || (t.subject || '').toLowerCase().includes(search));
+  if (subjectFilter) tasks = tasks.filter(t => t.subject === subjectFilter);
+  if (statusFilter === 'active') tasks = tasks.filter(t => t.status === 'active');
+  if (statusFilter === 'completed') tasks = tasks.filter(t => t.status === 'completed');
+
+  tasks.sort((a, b) => {
+    if (sortBy === 'deadline') return (a.deadline || '9999').localeCompare(b.deadline || '9999');
+    if (sortBy === 'priority') return priorityOrder(a.priority) - priorityOrder(b.priority);
+    return b.createdAt.localeCompare(a.createdAt);
+  });
+
+  // Update subject filter options
+  const subjects = [...new Set(getTasks().map(t => t.subject).filter(Boolean))];
+  const sel = document.getElementById('filterSubject');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">科目：すべて</option>' + subjects.map(s => `<option value="${s}" ${s === cur ? 'selected' : ''}>${s}</option>`).join('');
+
+  const container = document.getElementById('allTasks');
+  container.innerHTML = '';
+  tasks.forEach(t => container.appendChild(createTaskCard(t, true)));
+  initTaskFilters();
+}
+
+function createTaskCard(task, showActions = false) {
+  const div = document.createElement('div');
+  div.className = 'task-card' + (task.status === 'completed' ? ' completed' : '');
+  const color = getSubjectColor(task.subject);
+  const pct = task.totalAmount ? Math.min(100, Math.round((task.completedAmount || 0) / task.totalAmount * 100)) : 0;
+  const deadlineText = task.deadline ? formatDeadline(task.deadline) : '';
+  const isOverdue = task.deadline && task.deadline < todayStr() && task.status !== 'completed';
+
+  div.innerHTML = `
+    <div class="task-subject-bar" style="background:${color}"></div>
+    <div class="task-main">
+      <div class="task-title">${task.title}</div>
+      <div class="task-meta">
+        ${task.subject ? `<span class="task-tag tag-subject" style="background:${color}20;color:${color}">${task.subject}</span>` : ''}
+        ${task.totalAmount ? `<span class="task-tag">${task.completedAmount || 0}/${task.totalAmount}${task.unit || ''}</span>` : ''}
+        ${deadlineText ? `<span class="task-tag ${isOverdue ? 'tag-overdue' : 'tag-deadline'}">📅 ${deadlineText}</span>` : ''}
+        <span class="task-tag tag-${task.priority}">${priorityLabel(task.priority)}</span>
+      </div>
+      ${task.totalAmount ? `
+      <div class="task-progress">
+        <div class="task-progress-text">${pct}% 完了</div>
+        <div class="task-progress-bar"><div class="task-progress-fill" style="width:${pct}%;background:${color}"></div></div>
+      </div>` : ''}
+      ${task.memo ? `<div class="task-tag" style="margin-top:6px;max-width:400px;white-space:normal;">📝 ${task.memo}</div>` : ''}
+    </div>
+    ${showActions ? `
+    <div class="task-actions">
+      <button class="btn btn-icon btn-sm" data-edit="${task.id}" title="編集">✏️</button>
+      <button class="btn btn-icon btn-sm" data-toggle="${task.id}" title="${task.status === 'completed' ? '未完了' : '完了'}">
+        ${task.status === 'completed' ? '↩️' : '✅'}
+      </button>
+      <button class="btn btn-icon btn-sm" data-del="${task.id}" title="削除">🗑️</button>
+    </div>` : ''}
+  `;
+
+  if (showActions) {
+    div.querySelector('[data-edit]')?.addEventListener('click', () => openTaskModal(task.id));
+    div.querySelector('[data-toggle]')?.addEventListener('click', () => {
+      const newStatus = task.status === 'completed' ? 'active' : 'completed';
+      updateTask(task.id, { status: newStatus });
+      renderTasks(); renderHome();
+      showToast(newStatus === 'completed' ? '✅ 完了にしました' : '↩️ 未完了に戻しました', 'success');
+    });
+    div.querySelector('[data-del]')?.addEventListener('click', () => {
+      if (confirm(`「${task.title}」を削除しますか？`)) {
+        deleteTask(task.id);
+        renderTasks(); renderHome();
+        showToast('タスクを削除しました', 'danger');
+      }
+    });
+  }
+  return div;
+}
+
+// ===== Calendar =====
+function setupCalendar() {
+  document.getElementById('calPrev').addEventListener('click', () => {
+    if (calView === 'month') calDate = new Date(calDate.getFullYear(), calDate.getMonth() - 1, 1);
+    else if (calView === 'week') calDate = addDaysDate(calDate, -7);
+    else calDate = addDaysDate(calDate, -1);
+    renderCalendar();
+  });
+  document.getElementById('calNext').addEventListener('click', () => {
+    if (calView === 'month') calDate = new Date(calDate.getFullYear(), calDate.getMonth() + 1, 1);
+    else if (calView === 'week') calDate = addDaysDate(calDate, 7);
+    else calDate = addDaysDate(calDate, 1);
+    renderCalendar();
+  });
+  document.getElementById('calToday').addEventListener('click', () => { calDate = new Date(); renderCalendar(); });
+
+  document.querySelectorAll('[data-view]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-view]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      calView = btn.dataset.view;
+      renderCalendar();
+    });
+  });
+}
+
+function renderCalendar() {
+  const container = document.getElementById('calendarView');
+  const title = document.getElementById('calTitle');
+  container.innerHTML = '';
+
+  if (calView === 'month') renderMonthCalendar(container, title);
+  else if (calView === 'week') renderWeekCalendar(container, title);
+  else renderDayCalendar(container, title);
+}
+
+function renderMonthCalendar(container, title) {
+  const year = calDate.getFullYear(), month = calDate.getMonth();
+  title.textContent = `${year}年${month + 1}月`;
+
+  const grid = document.createElement('div');
+  grid.className = 'cal-month-grid';
+
+  const days = ['日', '月', '火', '水', '木', '金', '土'];
+  days.forEach(d => { const h = document.createElement('div'); h.className = 'cal-header'; h.textContent = d; grid.appendChild(h); });
+
+  const first = new Date(year, month, 1).getDay();
+  const last = new Date(year, month + 1, 0).getDate();
+  const today = todayStr();
+  const dailyTasks = getDailyTasks();
+  const tasks = getTasks();
+
+  // Pad before
+  for (let i = 0; i < first; i++) {
+    const prevLast = new Date(year, month, 0).getDate();
+    const d = document.createElement('div');
+    d.className = 'cal-day other-month';
+    d.innerHTML = `<div class="cal-day-num">${prevLast - first + i + 1}</div>`;
+    grid.appendChild(d);
+  }
+
+  for (let day = 1; day <= last; day++) {
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const dayTasks = dailyTasks.filter(d => d.date === dateStr);
+    const d = document.createElement('div');
+    d.className = 'cal-day' + (dateStr === today ? ' today' : '');
+
+    const chips = dayTasks.slice(0, 3).map(dt => {
+      const task = tasks.find(t => t.id === dt.taskId);
+      if (!task) return '';
+      const color = getSubjectColor(task.subject);
+      return `<div class="cal-task-chip" style="background:${color}20;color:${color}">${task.title}</div>`;
+    }).join('');
+
+    d.innerHTML = `<div class="cal-day-num">${day}</div>${chips}`;
+    grid.appendChild(d);
+  }
+
+  container.appendChild(grid);
+}
+
+function renderWeekCalendar(container, title) {
+  const dow = calDate.getDay();
+  const weekStart = addDaysDate(calDate, -dow);
+  const weekEnd = addDaysDate(weekStart, 6);
+  title.textContent = `${weekStart.getMonth() + 1}/${weekStart.getDate()} 〜 ${weekEnd.getMonth() + 1}/${weekEnd.getDate()}`;
+
+  const grid = document.createElement('div');
+  grid.className = 'cal-week-grid';
+
+  // Headers
+  const emptyH = document.createElement('div');
+  emptyH.className = 'cal-week-header';
+  grid.appendChild(emptyH);
+
+  const today = todayStr();
+  const dayLabels = ['日', '月', '火', '水', '木', '金', '土'];
+  for (let i = 0; i < 7; i++) {
+    const d = addDaysDate(weekStart, i);
+    const dStr = dateToStr(d);
+    const h = document.createElement('div');
+    h.className = 'cal-week-header' + (dStr === today ? ' today' : '');
+    h.textContent = `${dayLabels[d.getDay()]} ${d.getDate()}`;
+    grid.appendChild(h);
+  }
+
+  const dailyTasks = getDailyTasks();
+  const tasks = getTasks();
+
+  // Rows (simplified: no time slots, just task list per day)
+  for (let h = 0; h < 3; h++) {
+    const timeLabel = document.createElement('div');
+    timeLabel.className = 'cal-time-label';
+    timeLabel.textContent = h === 0 ? '午前' : h === 1 ? '午後' : '夜';
+    grid.appendChild(timeLabel);
+    for (let i = 0; i < 7; i++) {
+      const d = addDaysDate(weekStart, i);
+      const dStr = dateToStr(d);
+      const cell = document.createElement('div');
+      cell.className = 'cal-week-cell';
+      const dayTs = dailyTasks.filter(dt => dt.date === dStr);
+      if (h === 0) {
+        dayTs.slice(0, 2).forEach(dt => {
+          const task = tasks.find(t => t.id === dt.taskId);
+          if (!task) return;
+          const color = getSubjectColor(task.subject);
+          const chip = document.createElement('div');
+          chip.className = 'cal-week-task';
+          chip.style.cssText = `background:${color}20;color:${color}`;
+          chip.textContent = task.title;
+          cell.appendChild(chip);
+        });
+      }
+      grid.appendChild(cell);
+    }
+  }
+
+  container.appendChild(grid);
+}
+
+function renderDayCalendar(container, title) {
+  const dStr = dateToStr(calDate);
+  title.textContent = `${calDate.getFullYear()}年${calDate.getMonth() + 1}月${calDate.getDate()}日`;
+
+  const dailyTasks = getDailyTasksForDate(dStr);
+  const tasks = getTasks();
+
+  const list = document.createElement('div');
+  list.className = 'task-list';
+
+  if (dailyTasks.length === 0) {
+    list.innerHTML = '<div class="empty-state"><p>この日のタスクはありません</p></div>';
+  } else {
+    dailyTasks.forEach(dt => {
+      const task = tasks.find(t => t.id === dt.taskId);
+      if (!task) return;
+      list.appendChild(createTodayTaskCard(task, dt));
+    });
+  }
+  container.appendChild(list);
+}
+
+// ===== Stats =====
+function setupStats() {
+  document.querySelectorAll('[data-period]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-period]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      statsPeriod = btn.dataset.period;
+      renderStats();
+    });
+  });
+}
+
+function renderStats() {
+  const today = todayStr();
+  const days = statsPeriod === 'week' ? 7 : 30;
+  const dates = Array.from({ length: days }, (_, i) => addDays(today, -(days - 1 - i)));
+  const dailyTasks = getDailyTasks();
+  const tasks = getTasks();
+
+  let totalPlanned = 0, totalDone = 0, totalAmount = 0;
+  dates.forEach(date => {
+    const dts = dailyTasks.filter(d => d.date === date);
+    totalPlanned += dts.length;
+    const done = dts.filter(d => d.status === 'done' || d.completedAmount >= d.plannedAmount);
+    totalDone += done.length;
+    totalAmount += done.reduce((s, d) => s + (d.completedAmount || 0), 0);
+  });
+
+  const rate = totalPlanned ? Math.round(totalDone / totalPlanned * 100) : 0;
+  document.getElementById('statsRate').textContent = rate + '%';
+  document.getElementById('statsCompleted').textContent = totalDone;
+  document.getElementById('statsAmount').textContent = totalAmount;
+
+  // Subject stats
+  const subjectMap = {};
+  tasks.forEach(t => {
+    if (!t.subject) return;
+    if (!subjectMap[t.subject]) subjectMap[t.subject] = { total: 0, completed: 0 };
+    subjectMap[t.subject].total++;
+    if (t.status === 'completed') subjectMap[t.subject].completed++;
+  });
+
+  const subjectContainer = document.getElementById('subjectStats');
+  subjectContainer.innerHTML = '';
+  const colors = ['#4f46e5','#7c3aed','#db2777','#059669','#d97706','#0284c7'];
+  Object.entries(subjectMap).forEach(([subj, data], i) => {
+    const pct = data.total ? Math.round(data.completed / data.total * 100) : 0;
+    const color = getSubjectColor(subj) || colors[i % colors.length];
+    const row = document.createElement('div');
+    row.className = 'subject-stat-row';
+    row.innerHTML = `
+      <div class="subject-stat-name">${subj}</div>
+      <div class="subject-stat-bar"><div class="subject-stat-fill" style="width:${pct}%;background:${color}"></div></div>
+      <div class="subject-stat-pct">${pct}%</div>
+    `;
+    subjectContainer.appendChild(row);
+  });
+
+  // Daily chart
+  const chartContainer = document.getElementById('dailyChart');
+  chartContainer.innerHTML = '';
+  const max = Math.max(1, ...dates.map(date => dailyTasks.filter(d => d.date === date).length));
+
+  dates.forEach(date => {
+    const dts = dailyTasks.filter(d => d.date === date);
+    const done = dts.filter(d => d.status === 'done' || d.completedAmount >= d.plannedAmount).length;
+    const height = dts.length ? Math.round(done / dts.length * 100) : 0;
+    const bar = document.createElement('div');
+    bar.className = 'daily-bar';
+    const d = new Date(date);
+    bar.innerHTML = `
+      <div class="daily-bar-fill" style="height:${height}%;background:var(--accent);opacity:${0.4 + height / 100 * 0.6}"></div>
+      <div class="daily-bar-label">${d.getMonth() + 1}/${d.getDate()}</div>
+    `;
+    chartContainer.appendChild(bar);
+  });
+}
+
+// ===== Repeat Tasks (Phase2) =====
+function setupRepeat() {
+  document.getElementById('addRepeatBtn').addEventListener('click', () => openModal('repeatModal'));
+  document.getElementById('repeatModalClose').addEventListener('click', () => closeModal('repeatModal'));
+  document.getElementById('repeatModalCancel').addEventListener('click', () => closeModal('repeatModal'));
+
+  document.querySelectorAll('.weekday-btn').forEach(btn => {
+    btn.addEventListener('click', () => btn.classList.toggle('active'));
+  });
+
+  document.getElementById('repeatModalSave').addEventListener('click', () => {
+    const title = document.getElementById('repeatTitle').value.trim();
+    if (!title) { showToast('タイトルを入力してください', 'danger'); return; }
+
+    const days = [...document.querySelectorAll('.weekday-btn.active')].map(b => parseInt(b.dataset.day));
+    if (days.length === 0) { showToast('曜日を選択してください', 'danger'); return; }
+
+    addRepeatTask({
+      id: generateId(),
+      title,
+      subject: document.getElementById('repeatSubject').value.trim(),
+      amount: parseFloat(document.getElementById('repeatAmount').value) || 1,
+      unit: document.getElementById('repeatUnit').value.trim(),
+      memo: document.getElementById('repeatMemo').value.trim(),
+      days,
+      createdAt: new Date().toISOString(),
+    });
+
+    closeModal('repeatModal');
+    renderRepeat();
+    showToast('繰り返しタスクを追加しました', 'success');
+
+    // Reset
+    document.querySelectorAll('.weekday-btn').forEach(b => b.classList.remove('active'));
+  });
+}
+
+function renderRepeat() {
+  const list = getRepeatTasks();
+  const container = document.getElementById('repeatTasks');
+  const empty = document.getElementById('repeatEmpty');
+  container.innerHTML = '';
+
+  if (list.length === 0) {
+    empty.classList.remove('hidden');
+  } else {
+    empty.classList.add('hidden');
+    const dayNames = ['日', '月', '火', '水', '木', '金', '土'];
+    list.forEach(rt => {
+      const color = getSubjectColor(rt.subject);
+      const card = document.createElement('div');
+      card.className = 'task-card';
+      card.innerHTML = `
+        <div class="task-subject-bar" style="background:${color}"></div>
+        <div class="task-main">
+          <div class="task-title">🔁 ${rt.title}</div>
+          <div class="task-meta">
+            ${rt.subject ? `<span class="task-tag tag-subject" style="background:${color}20;color:${color}">${rt.subject}</span>` : ''}
+            ${rt.amount ? `<span class="task-tag">${rt.amount}${rt.unit || ''}/回</span>` : ''}
+            <span class="task-tag">${rt.days.map(d => dayNames[d]).join('・')}</span>
+          </div>
+        </div>
+        <div class="task-actions">
+          <button class="btn btn-icon btn-sm" data-del="${rt.id}" title="削除">🗑️</button>
+        </div>
+      `;
+      card.querySelector('[data-del]').addEventListener('click', () => {
+        if (confirm(`「${rt.title}」を削除しますか？`)) {
+          deleteRepeatTask(rt.id);
+          renderRepeat();
+          showToast('削除しました', 'danger');
+        }
+      });
+      container.appendChild(card);
+    });
+  }
+}
+
+// ===== Timetable (Phase2) =====
+function setupTimetable() {
+  document.getElementById('addPeriodBtn').addEventListener('click', () => openModal('periodModal'));
+  document.getElementById('periodModalClose').addEventListener('click', () => closeModal('periodModal'));
+  document.getElementById('periodModalCancel').addEventListener('click', () => closeModal('periodModal'));
+  document.getElementById('periodModalSave').addEventListener('click', () => {
+    const subject = document.getElementById('periodSubject').value.trim();
+    if (!subject) { showToast('科目名を入力してください', 'danger'); return; }
+    addPeriod({
+      id: generateId(),
+      day: parseInt(document.getElementById('periodDay').value),
+      slot: parseInt(document.getElementById('periodSlot').value),
+      subject,
+      room: document.getElementById('periodRoom').value.trim(),
+      teacher: document.getElementById('periodTeacher').value.trim(),
+    });
+    closeModal('periodModal');
+    renderTimetable();
+    showToast('時間割を追加しました', 'success');
+  });
+}
+
+function renderTimetable() {
+  const grid = document.getElementById('timetableGrid');
+  grid.innerHTML = '';
+  const timetable = getTimetable();
+  const dayLabels = ['月', '火', '水', '木', '金', '土'];
+  const slotTimes = ['8:50', '10:40', '12:50', '14:40', '16:30', '18:20'];
+
+  // Headers
+  const corner = document.createElement('div');
+  corner.className = 'tt-header';
+  grid.appendChild(corner);
+  dayLabels.forEach(d => {
+    const h = document.createElement('div');
+    h.className = 'tt-header';
+    h.textContent = d;
+    grid.appendChild(h);
+  });
+
+  for (let slot = 1; slot <= 6; slot++) {
+    const timeEl = document.createElement('div');
+    timeEl.className = 'tt-time';
+    timeEl.innerHTML = `<div>${slot}限<br><small>${slotTimes[slot - 1]}</small></div>`;
+    grid.appendChild(timeEl);
+
+    for (let day = 1; day <= 6; day++) {
+      const cell = document.createElement('div');
+      cell.className = 'tt-cell';
+      const period = timetable.find(p => p.day === day && p.slot === slot);
+      if (period) {
+        const color = getSubjectColor(period.subject);
+        cell.innerHTML = `
+          <div class="tt-subject" style="background:${color}20;color:${color};border-color:${color}">
+            <strong>${period.subject}</strong>
+            ${period.room ? `<div class="tt-room">${period.room}</div>` : ''}
+          </div>
+        `;
+        cell.addEventListener('click', () => {
+          if (confirm(`「${period.subject}」を削除しますか？`)) {
+            deletePeriod(period.id);
+            renderTimetable();
+          }
+        });
+      } else {
+        cell.addEventListener('click', () => {
+          document.getElementById('periodDay').value = day;
+          document.getElementById('periodSlot').value = slot;
+          openModal('periodModal');
+        });
+      }
+      grid.appendChild(cell);
+    }
+  }
+}
+
+// ===== Helpers =====
+function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
+function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+
+function showToast(message, type = '') {
+  const container = document.getElementById('toastContainer');
+  const toast = document.createElement('div');
+  toast.className = 'toast' + (type ? ' ' + type : '');
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(() => toast.remove(), 3000);
+}
+
+function getSubjectColor(subject) {
+  if (!subject) return 'var(--accent)';
+  const map = getSubjectColors();
+  if (map[subject]) return map[subject];
+  // 自動生成
+  const colors = ['#4f46e5','#7c3aed','#db2777','#059669','#d97706','#0284c7','#0891b2','#65a30d'];
+  let hash = 0;
+  for (let c of subject) hash = (hash * 31 + c.charCodeAt(0)) & 0xffffffff;
+  return colors[Math.abs(hash) % colors.length];
+}
+
+function priorityLabel(p) {
+  return p === 'high' ? '🔴 高' : p === 'low' ? '🟢 低' : '🟡 中';
+}
+function priorityOrder(p) { return p === 'high' ? 0 : p === 'medium' ? 1 : 2; }
+
+function formatDeadline(d) {
+  const today = todayStr();
+  const diff = dateDiffDays(today, d);
+  if (diff < 0) return `${-diff}日超過`;
+  if (diff === 0) return '今日';
+  if (diff === 1) return '明日';
+  return `${d.replace(/-/g, '/')} (あと${diff}日)`;
+}
+
+function dateDiffDays(from, to) {
+  const f = new Date(from), t = new Date(to);
+  return Math.round((t - f) / 86400000);
+}
+
+function addDays(dateStr, days) {
+  const d = new Date(dateStr);
+  d.setDate(d.getDate() + days);
+  return dateToStr(d);
+}
+
+function addDaysDate(date, days) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+function dateToStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function calcWeekRate() {
+  const today = todayStr();
+  const dates = Array.from({ length: 7 }, (_, i) => addDays(today, -(6 - i)));
+  const dts = getDailyTasks().filter(d => dates.includes(d.date));
+  if (!dts.length) return 0;
+  const done = dts.filter(d => d.status === 'done' || d.completedAmount >= d.plannedAmount).length;
+  return Math.round(done / dts.length * 100);
+}
+
+function updateDateBadge() {
+  const d = new Date();
+  const days = ['日', '月', '火', '水', '木', '金', '土'];
+  document.getElementById('todayDate').textContent =
+    `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}（${days[d.getDay()]}）`;
+}
+
+// ===== 通知スケジューラ (Phase2) =====
+function scheduleNotifications() {
+  if (Notification.permission !== 'granted') return;
+
+  const today = todayStr();
+  const tasks = getTasks().filter(t => t.status === 'active');
+  const now = new Date();
+
+  // 締切が今日のタスク通知
+  const todayDeadline = tasks.filter(t => t.deadline === today);
+  if (todayDeadline.length > 0) {
+    const msg = todayDeadline.map(t => t.title).join('、');
+    showBrowserNotif('📅 今日が締切のタスク', msg);
+  }
+
+  // 明日締切のタスク
+  const tomorrow = addDays(today, 1);
+  const tomorrowDeadline = tasks.filter(t => t.deadline === tomorrow);
+  if (tomorrowDeadline.length > 0) {
+    const msg = tomorrowDeadline.map(t => t.title).join('、') + ' — 明日が締切です';
+    showBrowserNotif('⚠️ 明日締切のタスク', msg);
+  }
+
+  // 今日のタスク件数
+  const todayTasks = getDailyTasksForDate(today);
+  if (todayTasks.length > 0) {
+    const pending = todayTasks.filter(d => d.status !== 'done' && d.completedAmount < d.plannedAmount);
+    if (pending.length > 0) {
+      showBrowserNotif('📚 今日の学習', `残り ${pending.length} 件のタスクがあります`);
+    }
+  }
+}
+
+function showBrowserNotif(title, body) {
+  if (Notification.permission !== 'granted') return;
+  try {
+    new Notification(title, { body, icon: '📚' });
+  } catch (e) {
+    console.warn('通知エラー:', e);
+  }
+}
+
+// 1分ごとに締切チェック
+setInterval(() => {
+  const now = new Date();
+  // 毎朝8時に通知
+  if (now.getHours() === 8 && now.getMinutes() === 0) {
+    scheduleNotifications();
+  }
+}, 60000);
+
+// ===== フィルター初期化（重複バインド防止） =====
+function initTaskFilters() {
+  const ids = ['searchInput', 'filterSubject', 'filterStatus', 'sortBy'];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el || el._filterBound) return;
+    el._filterBound = true;
+    el.addEventListener('input', renderTasks);
+    el.addEventListener('change', renderTasks);
+  });
+}
+
+// ===== ウィジェット風ホーム追加要素 =====
+function renderStreakWidget() {
+  // 連続達成日数を計算
+  const today = todayStr();
+  let streak = 0;
+  let checkDate = today;
+
+  while (true) {
+    const dts = getDailyTasks().filter(d => d.date === checkDate);
+    if (dts.length === 0) break;
+    const allDone = dts.every(d => d.status === 'done' || d.completedAmount >= d.plannedAmount);
+    if (!allDone) break;
+    streak++;
+    checkDate = addDays(checkDate, -1);
+  }
+  return streak;
+}
