@@ -557,3 +557,214 @@ textarea { resize: vertical; }
 
 /* ===== Import/Export row ===== */
 label.btn { display: inline-flex; align-items: center; }
+
+/* ===== 週間予定ページ ===== */
+.week-summary {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+  margin-bottom: 20px;
+}
+.week-summary-day {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 4px;
+  text-align: center;
+  font-size: 12px;
+  transition: all var(--transition);
+}
+.week-summary-day.today { border-color: var(--accent); background: var(--accent-light); }
+.week-summary-day.today .wsd-label { color: var(--accent); font-weight: 700; }
+.week-summary-day.done { border-color: var(--success); }
+.wsd-label { font-weight: 600; color: var(--text2); margin-bottom: 4px; }
+.wsd-date { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+.wsd-rate { font-size: 11px; color: var(--text2); }
+.wsd-bar { height: 4px; background: var(--surface2); border-radius: 2px; margin-top: 4px; overflow: hidden; }
+.wsd-bar-fill { height: 100%; background: var(--success); border-radius: 2px; }
+
+.week-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+.week-col {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+.week-col.today { border-color: var(--accent); }
+.week-col-header {
+  padding: 10px 8px;
+  text-align: center;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text2);
+}
+.week-col.today .week-col-header { background: var(--accent); color: white; }
+.week-col-body { padding: 6px; display: flex; flex-direction: column; gap: 4px; min-height: 60px; }
+.week-task-chip {
+  padding: 4px 6px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity var(--transition);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.week-task-chip:hover { opacity: 0.75; }
+.week-task-chip.done { text-decoration: line-through; opacity: 0.5; }
+.week-col-empty { font-size: 11px; color: var(--border); text-align: center; padding: 10px 0; }
+
+/* ===== カレンダー強化 ===== */
+.cal-popup {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.35);
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.cal-popup.hidden { display: none; }
+.cal-popup-inner {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 20px;
+  min-width: 280px;
+  max-width: 400px;
+  width: 100%;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+  animation: modalIn 0.2s ease;
+}
+.cal-popup-date { font-size: 13px; color: var(--text2); margin-bottom: 12px; font-weight: 500; }
+.cal-popup-close { float: right; background: none; border: none; font-size: 18px; color: var(--text2); cursor: pointer; }
+.cal-popup-task { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.cal-popup-task:last-child { border-bottom: none; }
+.cal-popup-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.cal-popup-task-title { font-size: 13px; font-weight: 500; flex: 1; }
+.cal-popup-task-amount { font-size: 11px; color: var(--text2); }
+.cal-day { cursor: pointer; }
+.cal-day:hover .cal-day-num { color: var(--accent); }
+
+/* 週カレンダー（縦スクロール式時間軸） */
+.cal-week-timeline {
+  display: grid;
+  grid-template-columns: 52px repeat(7, 1fr);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--border);
+  gap: 1px;
+  box-shadow: var(--shadow);
+}
+.cwt-corner { background: var(--surface2); }
+.cwt-day-header {
+  background: var(--surface2);
+  padding: 10px 4px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text2);
+}
+.cwt-day-header.today { background: var(--accent); color: white; }
+.cwt-time {
+  background: var(--surface);
+  padding: 4px 6px;
+  font-size: 10px;
+  color: var(--text2);
+  text-align: right;
+  min-height: 48px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding-top: 4px;
+}
+.cwt-cell {
+  background: var(--surface);
+  min-height: 48px;
+  padding: 2px;
+  border-top: 1px solid var(--border);
+  position: relative;
+}
+.cwt-cell.now-row { background: color-mix(in srgb, var(--accent) 5%, var(--surface)); }
+.cwt-task-block {
+  background: var(--accent-light);
+  color: var(--accent);
+  border-left: 3px solid var(--accent);
+  border-radius: 3px;
+  padding: 2px 4px;
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+  margin: 1px 0;
+}
+.cwt-task-block:hover { opacity: 0.8; }
+
+/* ===== ルーティン設定ページ ===== */
+.page-desc { color: var(--text2); font-size: 13px; margin-bottom: 20px; }
+.routine-blocks { display: flex; flex-direction: column; gap: 20px; max-width: 700px; }
+.routine-block {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+.routine-block-header {
+  padding: 14px 18px;
+  font-size: 15px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+.routine-block-header.morning { background: linear-gradient(90deg, #fef9c3, #fef3c7); color: #92400e; }
+.routine-block-header.afternoon { background: linear-gradient(90deg, #dbeafe, #ede9fe); color: #1e40af; }
+.routine-block-header.evening { background: linear-gradient(90deg, #ede9fe, #fce7f3); color: #5b21b6; }
+[data-theme="dark"] .routine-block-header.morning { background: #292116; color: #fbbf24; }
+[data-theme="dark"] .routine-block-header.afternoon { background: #0f1f3d; color: #93c5fd; }
+[data-theme="dark"] .routine-block-header.evening { background: #1e1240; color: #c4b5fd; }
+
+.routine-list { padding: 8px 12px; min-height: 50px; }
+.routine-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--border);
+  cursor: grab;
+  transition: background var(--transition);
+  border-radius: var(--radius-sm);
+  user-select: none;
+}
+.routine-item:last-child { border-bottom: none; }
+.routine-item:hover { background: var(--surface2); }
+.routine-item.dragging { opacity: 0.4; background: var(--accent-light); }
+.routine-item.drag-over { border-top: 2px solid var(--accent); }
+.routine-drag-handle { color: var(--border); font-size: 16px; cursor: grab; flex-shrink: 0; }
+.routine-item-content { flex: 1; }
+.routine-item-title { font-size: 14px; font-weight: 500; }
+.routine-item-meta { font-size: 11px; color: var(--text2); margin-top: 2px; }
+.routine-item-actions { display: flex; gap: 4px; opacity: 0; transition: opacity var(--transition); }
+.routine-item:hover .routine-item-actions { opacity: 1; }
+.routine-add-btn { margin: 8px 12px 12px; }
+.routine-empty { font-size: 12px; color: var(--text2); text-align: center; padding: 16px 0; }
+
+/* ===== レスポンシブ追加 ===== */
+@media (max-width: 900px) {
+  .week-grid { grid-template-columns: repeat(4, 1fr); }
+  .week-summary { grid-template-columns: repeat(7, 1fr); }
+}
+@media (max-width: 600px) {
+  .week-grid { grid-template-columns: repeat(2, 1fr); }
+  .week-summary { gap: 3px; }
+  .wsd-date { font-size: 14px; }
+  .routine-blocks { gap: 12px; }
+}
