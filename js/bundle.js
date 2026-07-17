@@ -98,6 +98,31 @@ function deleteSubjectColor(subject) {
 function getSettings() { return loadObj(KEYS.SETTINGS, { theme: 'light', notifications: false }); }
 function saveSettings(s) { save(KEYS.SETTINGS, s); }
 
+// ===== Routines (Phase2) =====
+function getRoutines() { return loadObj('sf_routines', { morning: [], afternoon: [], evening: [] }); }
+function saveRoutines(r) { save('sf_routines', r); }
+function addRoutine(slot, item) {
+  const r = getRoutines();
+  r[slot] = r[slot] || [];
+  r[slot].push(item);
+  saveRoutines(r);
+}
+function updateRoutine(slot, id, patch) {
+  const r = getRoutines();
+  r[slot] = (r[slot] || []).map(x => x.id === id ? { ...x, ...patch } : x);
+  saveRoutines(r);
+}
+function deleteRoutine(slot, id) {
+  const r = getRoutines();
+  r[slot] = (r[slot] || []).filter(x => x.id !== id);
+  saveRoutines(r);
+}
+function reorderRoutines(slot, items) {
+  const r = getRoutines();
+  r[slot] = items;
+  saveRoutines(r);
+}
+
 // ===== Export / Import (Phase2) =====
 function exportAll() {
   return {
@@ -106,9 +131,10 @@ function exportAll() {
     repeat: getRepeatTasks(),
     timetable: getTimetable(),
     subjectColors: getSubjectColors(),
+    routines: getRoutines(),
     settings: getSettings(),
     exportedAt: new Date().toISOString(),
-    version: '2.0',
+    version: '2.1',
   };
 }
 function importAll(data) {
@@ -117,10 +143,12 @@ function importAll(data) {
   if (data.repeat) saveRepeatTasks(data.repeat);
   if (data.timetable) saveTimetable(data.timetable);
   if (data.subjectColors) save(KEYS.SUBJECT_COLORS, data.subjectColors);
+  if (data.routines) save('sf_routines', data.routines);
   if (data.settings) saveSettings(data.settings);
 }
 function clearAll() {
   Object.values(KEYS).forEach(k => localStorage.removeItem(k));
+  localStorage.removeItem('sf_routines');
 }
 
 // ===== Utilities =====
@@ -150,12 +178,13 @@ document.addEventListener('DOMContentLoaded', () => {
   setupStats();
   setupRepeat();
   setupTimetable();
+  setupWeekView();
+  setupRoutine();
   generateTodayDailyTasks();
   renderHome();
   renderTasks();
   updateDateBadge();
   initTaskFilters();
-  // 通知許可済みなら起動時チェック
   if (Notification.permission === 'granted') scheduleNotifications();
 });
 
@@ -303,9 +332,11 @@ function navigateTo(page) {
   document.querySelector(`[data-page="${page}"]`)?.classList.add('active');
 
   if (page === 'home') { renderHome(); generateTodayDailyTasks(); }
+  if (page === 'week') renderWeekView();
   if (page === 'tasks') renderTasks();
   if (page === 'calendar') renderCalendar();
   if (page === 'stats') renderStats();
+  if (page === 'routine') renderRoutine();
   if (page === 'repeat') renderRepeat();
   if (page === 'timetable') renderTimetable();
 }
@@ -826,67 +857,112 @@ function renderMonthCalendar(container, title) {
     }).join('');
 
     d.innerHTML = `<div class="cal-day-num">${day}</div>${chips}`;
+    d.addEventListener('click', () => showCalPopup(dateStr));
     grid.appendChild(d);
   }
 
   container.appendChild(grid);
 }
 
+function showCalPopup(dateStr) {
+  const dailyTasks = getDailyTasksForDate(dateStr);
+  const tasks = getTasks();
+  const popup = document.getElementById('calPopup');
+  const inner = document.getElementById('calPopupInner');
+  if (!popup || !inner) return;
+
+  const d = new Date(dateStr + 'T00:00:00');
+  const dayNames = ['日', '月', '火', '水', '木', '金', '土'];
+  const label = `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日（${dayNames[d.getDay()]}）`;
+
+  let html = `<button class="cal-popup-close" id="calPopupCloseBtn">✕</button>
+    <div class="cal-popup-date">${label}</div>`;
+
+  if (dailyTasks.length === 0) {
+    html += '<div style="color:var(--text2);font-size:13px;padding:12px 0">この日のタスクはありません</div>';
+  } else {
+    dailyTasks.forEach(dt => {
+      const task = tasks.find(t => t.id === dt.taskId);
+      if (!task) return;
+      const color = getSubjectColor(task.subject);
+      const done = dt.status === 'done' || dt.completedAmount >= dt.plannedAmount;
+      html += `<div class="cal-popup-task">
+        <div class="cal-popup-dot" style="background:${color}"></div>
+        <div class="cal-popup-task-title" style="${done ? 'text-decoration:line-through;opacity:0.5' : ''}">${task.title}</div>
+        <div class="cal-popup-task-amount">${dt.completedAmount||0}/${dt.plannedAmount}${task.unit||''}</div>
+      </div>`;
+    });
+  }
+
+  inner.innerHTML = html;
+  popup.classList.remove('hidden');
+
+  document.getElementById('calPopupCloseBtn').addEventListener('click', () => popup.classList.add('hidden'));
+  popup.addEventListener('click', (e) => { if (e.target === popup) popup.classList.add('hidden'); });
+}
+
 function renderWeekCalendar(container, title) {
   const dow = calDate.getDay();
   const weekStart = addDaysDate(calDate, -dow);
   const weekEnd = addDaysDate(weekStart, 6);
-  title.textContent = `${weekStart.getMonth() + 1}/${weekStart.getDate()} 〜 ${weekEnd.getMonth() + 1}/${weekEnd.getDate()}`;
-
-  const grid = document.createElement('div');
-  grid.className = 'cal-week-grid';
-
-  // Headers
-  const emptyH = document.createElement('div');
-  emptyH.className = 'cal-week-header';
-  grid.appendChild(emptyH);
+  title.textContent = `${weekStart.getMonth()+1}/${weekStart.getDate()} 〜 ${weekEnd.getMonth()+1}/${weekEnd.getDate()}`;
 
   const today = todayStr();
-  const dayLabels = ['日', '月', '火', '水', '木', '金', '土'];
+  const dayLabels = ['日','月','火','水','木','金','土'];
+  const timeSlots = ['6:00','8:00','10:00','12:00','14:00','16:00','18:00','20:00','22:00'];
+  const dailyTasks = getDailyTasks();
+  const tasks = getTasks();
+
+  const grid = document.createElement('div');
+  grid.className = 'cal-week-timeline';
+
+  // コーナー
+  const corner = document.createElement('div');
+  corner.className = 'cwt-corner';
+  grid.appendChild(corner);
+
+  // 曜日ヘッダー
   for (let i = 0; i < 7; i++) {
     const d = addDaysDate(weekStart, i);
     const dStr = dateToStr(d);
     const h = document.createElement('div');
-    h.className = 'cal-week-header' + (dStr === today ? ' today' : '');
+    h.className = 'cwt-day-header' + (dStr === today ? ' today' : '');
     h.textContent = `${dayLabels[d.getDay()]} ${d.getDate()}`;
     grid.appendChild(h);
   }
 
-  const dailyTasks = getDailyTasks();
-  const tasks = getTasks();
+  // 時間行
+  timeSlots.forEach(time => {
+    const timeEl = document.createElement('div');
+    timeEl.className = 'cwt-time';
+    timeEl.textContent = time;
+    grid.appendChild(timeEl);
 
-  // Rows (simplified: no time slots, just task list per day)
-  for (let h = 0; h < 3; h++) {
-    const timeLabel = document.createElement('div');
-    timeLabel.className = 'cal-time-label';
-    timeLabel.textContent = h === 0 ? '午前' : h === 1 ? '午後' : '夜';
-    grid.appendChild(timeLabel);
     for (let i = 0; i < 7; i++) {
       const d = addDaysDate(weekStart, i);
       const dStr = dateToStr(d);
       const cell = document.createElement('div');
-      cell.className = 'cal-week-cell';
-      const dayTs = dailyTasks.filter(dt => dt.date === dStr);
-      if (h === 0) {
-        dayTs.slice(0, 2).forEach(dt => {
+      cell.className = 'cwt-cell';
+
+      // その日のタスクを時間帯に応じて分散表示（先頭スロットにまとめて表示）
+      if (time === '8:00') {
+        dailyTasks.filter(dt => dt.date === dStr).forEach(dt => {
           const task = tasks.find(t => t.id === dt.taskId);
           if (!task) return;
           const color = getSubjectColor(task.subject);
-          const chip = document.createElement('div');
-          chip.className = 'cal-week-task';
-          chip.style.cssText = `background:${color}20;color:${color}`;
-          chip.textContent = task.title;
-          cell.appendChild(chip);
+          const done = dt.status === 'done' || dt.completedAmount >= dt.plannedAmount;
+          const block = document.createElement('div');
+          block.className = 'cwt-task-block';
+          block.style.cssText = `background:${color}18;color:${color};border-color:${color};${done?'opacity:0.45;text-decoration:line-through':''}`;
+          block.textContent = task.title;
+          block.title = `${task.title} ${dt.completedAmount||0}/${dt.plannedAmount}${task.unit||''}`;
+          block.addEventListener('click', () => showCalPopup(dStr));
+          cell.appendChild(block);
         });
       }
       grid.appendChild(cell);
     }
-  }
+  });
 
   container.appendChild(grid);
 }
@@ -1280,6 +1356,264 @@ function initTaskFilters() {
     el._filterBound = true;
     el.addEventListener('input', renderTasks);
     el.addEventListener('change', renderTasks);
+  });
+}
+
+// ===== 週間予定ページ =====
+let weekViewDate = new Date();
+
+function setupWeekView() {
+  document.getElementById('weekPrev').addEventListener('click', () => {
+    weekViewDate = addDaysDate(weekViewDate, -7);
+    renderWeekView();
+  });
+  document.getElementById('weekNext').addEventListener('click', () => {
+    weekViewDate = addDaysDate(weekViewDate, 7);
+    renderWeekView();
+  });
+  document.getElementById('weekToday').addEventListener('click', () => {
+    weekViewDate = new Date();
+    renderWeekView();
+  });
+}
+
+function renderWeekView() {
+  const dow = weekViewDate.getDay();
+  const weekStart = addDaysDate(weekViewDate, -dow);
+  const today = todayStr();
+  const dayNames = ['日','月','火','水','木','金','土'];
+  const dailyTasks = getDailyTasks();
+  const tasks = getTasks();
+
+  // ラベル
+  const weekEnd = addDaysDate(weekStart, 6);
+  document.getElementById('weekRangeLabel').textContent =
+    `${weekStart.getMonth()+1}/${weekStart.getDate()} 〜 ${weekEnd.getMonth()+1}/${weekEnd.getDate()}`;
+
+  // 7日分のデータ
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const d = addDaysDate(weekStart, i);
+    const dStr = dateToStr(d);
+    const dts = dailyTasks.filter(x => x.date === dStr);
+    const done = dts.filter(x => x.status === 'done' || x.completedAmount >= x.plannedAmount).length;
+    const rate = dts.length ? Math.round(done / dts.length * 100) : null;
+    return { d, dStr, dts, done, rate, dayName: dayNames[d.getDay()] };
+  });
+
+  // サマリー行
+  const summaryEl = document.getElementById('weekSummary');
+  summaryEl.innerHTML = '';
+  days.forEach(({ d, dStr, rate, dayName, done, dts }) => {
+    const isToday = dStr === today;
+    const div = document.createElement('div');
+    div.className = 'week-summary-day' + (isToday ? ' today' : '') + (rate === 100 ? ' done' : '');
+    div.innerHTML = `
+      <div class="wsd-label">${dayName}</div>
+      <div class="wsd-date">${d.getDate()}</div>
+      <div class="wsd-rate">${rate !== null ? rate + '%' : '—'}</div>
+      <div class="wsd-bar"><div class="wsd-bar-fill" style="width:${rate||0}%"></div></div>
+    `;
+    summaryEl.appendChild(div);
+  });
+
+  // 7列グリッド
+  const gridEl = document.getElementById('weekGrid');
+  gridEl.innerHTML = '';
+  days.forEach(({ d, dStr, dts, dayName }) => {
+    const isToday = dStr === today;
+    const col = document.createElement('div');
+    col.className = 'week-col' + (isToday ? ' today' : '');
+
+    const header = document.createElement('div');
+    header.className = 'week-col-header';
+    header.innerHTML = `${dayName}<br>${d.getMonth()+1}/${d.getDate()}`;
+    col.appendChild(header);
+
+    const body = document.createElement('div');
+    body.className = 'week-col-body';
+
+    if (dts.length === 0) {
+      body.innerHTML = '<div class="week-col-empty">なし</div>';
+    } else {
+      dts.forEach(dt => {
+        const task = tasks.find(t => t.id === dt.taskId);
+        if (!task) return;
+        const color = getSubjectColor(task.subject);
+        const done = dt.status === 'done' || dt.completedAmount >= dt.plannedAmount;
+        const chip = document.createElement('div');
+        chip.className = 'week-task-chip' + (done ? ' done' : '');
+        chip.style.cssText = `background:${color}20;color:${color};border-left:3px solid ${color}`;
+        chip.textContent = task.title;
+        chip.title = `${task.title} ${dt.completedAmount||0}/${dt.plannedAmount}${task.unit||''}`;
+        if (isToday && !done) {
+          chip.addEventListener('click', () => openProgressModal(task.id, dt.id));
+        }
+        body.appendChild(chip);
+      });
+    }
+    col.appendChild(body);
+    gridEl.appendChild(col);
+  });
+}
+
+// ===== ルーティン設定ページ =====
+let routineEditId = null;
+let routineEditSlot = null;
+let dragSrcEl = null;
+
+function setupRoutine() {
+  document.getElementById('addRoutineBtn').addEventListener('click', () => {
+    openRoutineModal(null, 'morning');
+  });
+
+  document.querySelectorAll('.routine-add-btn').forEach(btn => {
+    btn.addEventListener('click', () => openRoutineModal(null, btn.dataset.slot));
+  });
+
+  document.getElementById('routineModalClose').addEventListener('click', () => closeModal('routineModal'));
+  document.getElementById('routineModalCancel').addEventListener('click', () => closeModal('routineModal'));
+  document.getElementById('routineModalSave').addEventListener('click', saveRoutineItem);
+}
+
+function openRoutineModal(id = null, slot = 'morning') {
+  routineEditId = id;
+  routineEditSlot = slot;
+  const slotNames = { morning: '朝', afternoon: '昼', evening: '夜' };
+  document.getElementById('routineModalTitle').textContent =
+    id ? 'ルーティン編集' : `${slotNames[slot]}のルーティンを追加`;
+  document.getElementById('routineContent').value = '';
+  document.getElementById('routineDuration').value = '';
+  document.getElementById('routineSubject').value = '';
+  document.getElementById('routineSlot').value = slot;
+  document.getElementById('routineEditId').value = id || '';
+
+  if (id) {
+    const r = getRoutines();
+    const item = (r[slot] || []).find(x => x.id === id);
+    if (item) {
+      document.getElementById('routineContent').value = item.content;
+      document.getElementById('routineDuration').value = item.duration || '';
+      document.getElementById('routineSubject').value = item.subject || '';
+    }
+  }
+  openModal('routineModal');
+}
+
+function saveRoutineItem() {
+  const content = document.getElementById('routineContent').value.trim();
+  if (!content) { showToast('内容を入力してください', 'danger'); return; }
+  const slot = document.getElementById('routineSlot').value;
+  const id = document.getElementById('routineEditId').value;
+  const item = {
+    id: id || generateId(),
+    content,
+    duration: parseInt(document.getElementById('routineDuration').value) || 0,
+    subject: document.getElementById('routineSubject').value.trim(),
+  };
+  if (id) {
+    updateRoutine(slot, id, item);
+    showToast('更新しました', 'success');
+  } else {
+    addRoutine(slot, item);
+    showToast('追加しました', 'success');
+  }
+  closeModal('routineModal');
+  renderRoutine();
+}
+
+function renderRoutine() {
+  const r = getRoutines();
+  const slots = ['morning', 'afternoon', 'evening'];
+  slots.forEach(slot => {
+    const list = document.getElementById(`routine-${slot}`);
+    if (!list) return;
+    list.innerHTML = '';
+    const items = r[slot] || [];
+    if (items.length === 0) {
+      list.innerHTML = '<div class="routine-empty">まだありません。追加してみましょう</div>';
+      return;
+    }
+    items.forEach((item, idx) => {
+      const div = document.createElement('div');
+      div.className = 'routine-item';
+      div.draggable = true;
+      div.dataset.id = item.id;
+      div.dataset.slot = slot;
+      div.dataset.idx = idx;
+      const color = getSubjectColor(item.subject);
+      div.innerHTML = `
+        <span class="routine-drag-handle">⠿</span>
+        <div class="routine-item-content">
+          <div class="routine-item-title">${item.content}</div>
+          <div class="routine-item-meta">
+            ${item.subject ? `<span style="color:${color};font-weight:600">${item.subject}</span>　` : ''}
+            ${item.duration ? `⏱ ${item.duration}分` : ''}
+          </div>
+        </div>
+        <div class="routine-item-actions">
+          <button class="btn btn-icon btn-sm" data-edit="${item.id}" data-slot="${slot}" title="編集">✏️</button>
+          <button class="btn btn-icon btn-sm" data-del="${item.id}" data-slot="${slot}" title="削除">🗑️</button>
+        </div>
+      `;
+
+      // D&D
+      div.addEventListener('dragstart', (e) => {
+        dragSrcEl = div;
+        div.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      div.addEventListener('dragend', () => div.classList.remove('dragging'));
+      div.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        document.querySelectorAll('.routine-item').forEach(x => x.classList.remove('drag-over'));
+        div.classList.add('drag-over');
+      });
+      div.addEventListener('drop', (e) => {
+        e.preventDefault();
+        div.classList.remove('drag-over');
+        if (!dragSrcEl || dragSrcEl === div) return;
+        const srcSlot = dragSrcEl.dataset.slot;
+        const dstSlot = div.dataset.slot;
+        if (srcSlot !== dstSlot) return; // 同スロット内のみ
+        const srcIdx = parseInt(dragSrcEl.dataset.idx);
+        const dstIdx = parseInt(div.dataset.idx);
+        const rr = getRoutines();
+        const arr = [...(rr[srcSlot] || [])];
+        const [moved] = arr.splice(srcIdx, 1);
+        arr.splice(dstIdx, 0, moved);
+        reorderRoutines(srcSlot, arr);
+        renderRoutine();
+      });
+
+      div.querySelector('[data-edit]')?.addEventListener('click', (e) => {
+        openRoutineModal(e.currentTarget.dataset.edit, e.currentTarget.dataset.slot);
+      });
+      div.querySelector('[data-del]')?.addEventListener('click', (e) => {
+        deleteRoutine(e.currentTarget.dataset.slot, e.currentTarget.dataset.del);
+        renderRoutine();
+        showToast('削除しました', 'danger');
+      });
+
+      list.appendChild(div);
+    });
+
+    // スロット全体のdrop（空リストへの追加）
+    list.addEventListener('dragover', (e) => e.preventDefault());
+    list.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (!dragSrcEl) return;
+    });
+  });
+
+  // 合計時間サマリーをヘッダーに表示
+  slots.forEach(slot => {
+    const items = r[slot] || [];
+    const total = items.reduce((s, x) => s + (x.duration || 0), 0);
+    const header = document.querySelector(`.routine-block-header.${slot}`);
+    if (header && total > 0) {
+      const slotNames = { morning: '朝', afternoon: '昼', evening: '夜' };
+      header.textContent = `${slot === 'morning' ? '🌅' : slot === 'afternoon' ? '☀️' : '🌙'} ${slotNames[slot]}のルーティン　合計 ${total}分`;
+    }
   });
 }
 
