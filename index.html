@@ -20,9 +20,11 @@
     </div>
     <ul class="nav-list">
       <li><a href="#" class="nav-item active" data-page="home">🏠 ホーム</a></li>
+      <li><a href="#" class="nav-item" data-page="week">📆 週間予定</a></li>
       <li><a href="#" class="nav-item" data-page="tasks">📋 タスク一覧</a></li>
       <li><a href="#" class="nav-item" data-page="calendar">📅 カレンダー</a></li>
       <li><a href="#" class="nav-item" data-page="stats">📊 統計</a></li>
+      <li><a href="#" class="nav-item" data-page="routine">⏰ ルーティン</a></li>
       <li><a href="#" class="nav-item" data-page="repeat">🔁 繰り返し</a></li>
       <li><a href="#" class="nav-item" data-page="timetable">🗓️ 時間割</a></li>
       <li><a href="#" class="nav-item" data-page="settings">⚙️ 設定</a></li>
@@ -114,6 +116,23 @@
       <div id="allTasks" class="task-list"></div>
     </div>
 
+    <!-- 週間予定ページ -->
+    <div class="page" id="page-week">
+      <div class="page-header">
+        <h1 class="page-title">週間予定</h1>
+        <div class="header-actions">
+          <button class="btn btn-outline" id="weekPrev">＜</button>
+          <span class="date-badge" id="weekRangeLabel"></span>
+          <button class="btn btn-outline" id="weekNext">＞</button>
+          <button class="btn btn-outline" id="weekToday">今週</button>
+        </div>
+      </div>
+      <!-- 週間達成サマリー -->
+      <div class="week-summary" id="weekSummary"></div>
+      <!-- 7日グリッド -->
+      <div class="week-grid" id="weekGrid"></div>
+    </div>
+
     <!-- カレンダーページ -->
     <div class="page" id="page-calendar">
       <div class="page-header">
@@ -131,6 +150,36 @@
         <button class="btn btn-outline" id="calToday">今日</button>
       </div>
       <div id="calendarView"></div>
+      <!-- タスク詳細ポップアップ -->
+      <div class="cal-popup hidden" id="calPopup">
+        <div class="cal-popup-inner" id="calPopupInner"></div>
+      </div>
+    </div>
+
+    <!-- ルーティン設定ページ -->
+    <div class="page" id="page-routine">
+      <div class="page-header">
+        <h1 class="page-title">ルーティン設定</h1>
+        <button class="btn btn-primary" id="addRoutineBtn">＋ 追加</button>
+      </div>
+      <p class="page-desc">時間帯ごとに毎日のルーティンを設定します。ドラッグで順番を入れ替えられます。</p>
+      <div class="routine-blocks">
+        <div class="routine-block">
+          <div class="routine-block-header morning">🌅 朝のルーティン</div>
+          <div class="routine-list" id="routine-morning" data-slot="morning"></div>
+          <button class="btn btn-outline btn-sm routine-add-btn" data-slot="morning">＋ 追加</button>
+        </div>
+        <div class="routine-block">
+          <div class="routine-block-header afternoon">☀️ 昼のルーティン</div>
+          <div class="routine-list" id="routine-afternoon" data-slot="afternoon"></div>
+          <button class="btn btn-outline btn-sm routine-add-btn" data-slot="afternoon">＋ 追加</button>
+        </div>
+        <div class="routine-block">
+          <div class="routine-block-header evening">🌙 夜のルーティン</div>
+          <div class="routine-list" id="routine-evening" data-slot="evening"></div>
+          <button class="btn btn-outline btn-sm routine-add-btn" data-slot="evening">＋ 追加</button>
+        </div>
+      </div>
     </div>
 
     <!-- 統計ページ -->
@@ -441,6 +490,38 @@
       <div class="modal-footer">
         <button class="btn btn-outline" id="progressModalCancel">キャンセル</button>
         <button class="btn btn-primary" id="progressModalSave">更新</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ルーティン追加モーダル -->
+  <div class="modal-overlay hidden" id="routineModal">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2 id="routineModalTitle">ルーティン追加</h2>
+        <button class="modal-close" id="routineModalClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>内容 *</label>
+          <input type="text" id="routineContent" placeholder="例：英単語10個を確認">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>所要時間（分）</label>
+            <input type="number" id="routineDuration" placeholder="15" min="1" max="480">
+          </div>
+          <div class="form-group">
+            <label>科目タグ</label>
+            <input type="text" id="routineSubject" placeholder="例：英語">
+          </div>
+        </div>
+        <input type="hidden" id="routineSlot">
+        <input type="hidden" id="routineEditId">
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" id="routineModalCancel">キャンセル</button>
+        <button class="btn btn-primary" id="routineModalSave">保存</button>
       </div>
     </div>
   </div>
