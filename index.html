@@ -1,534 +1,393 @@
 <!DOCTYPE html>
-<html lang="ja" data-theme="light">
+<html lang="ja" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0F172A">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>StudyFlow</title>
-  <link rel="stylesheet" href="css/style.css">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <!-- サイドバー -->
-  <nav class="sidebar" id="sidebar">
-    <div class="sidebar-header">
-      <div class="logo">
-        <span class="logo-icon">📚</span>
-        <span class="logo-text">StudyFlow</span>
-      </div>
-      <button class="sidebar-toggle" id="sidebarToggle">☰</button>
-    </div>
-    <ul class="nav-list">
-      <li><a href="#" class="nav-item active" data-page="home">🏠 ホーム</a></li>
-      <li><a href="#" class="nav-item" data-page="week">📆 週間予定</a></li>
-      <li><a href="#" class="nav-item" data-page="tasks">📋 タスク一覧</a></li>
-      <li><a href="#" class="nav-item" data-page="calendar">📅 カレンダー</a></li>
-      <li><a href="#" class="nav-item" data-page="stats">📊 統計</a></li>
-      <li><a href="#" class="nav-item" data-page="routine">⏰ ルーティン</a></li>
-      <li><a href="#" class="nav-item" data-page="repeat">🔁 繰り返し</a></li>
-      <li><a href="#" class="nav-item" data-page="timetable">🗓️ 時間割</a></li>
-      <li><a href="#" class="nav-item" data-page="settings">⚙️ 設定</a></li>
-    </ul>
-  </nav>
 
-  <!-- メインコンテンツ -->
-  <main class="main" id="main">
-    <!-- ホームページ -->
-    <div class="page active" id="page-home">
+  <!-- 今日の集中ゲージ -->
+  <div id="today-gauge" class="today-gauge">
+    <div class="gauge-inner">
+      <span class="gauge-label">今日の達成</span>
+      <div class="gauge-bar-wrap">
+        <div class="gauge-bar" id="gauge-bar"></div>
+      </div>
+      <span class="gauge-pct" id="gauge-pct">0%</span>
+      <span class="streak-badge" id="streak-badge"></span>
+      <button class="gauge-settings-btn" onclick="navigate('settings',null)" title="設定">⚙️</button>
+    </div>
+  </div>
+
+  <main class="main-content">
+
+    <!-- ホーム -->
+    <section class="page" id="page-today" data-page="today">
       <div class="page-header">
-        <h1 class="page-title">今日のダッシュボード</h1>
-        <div class="header-actions">
-          <span class="date-badge" id="todayDate"></span>
-          <button class="btn btn-primary" id="addTaskBtn">＋ タスク追加</button>
-        </div>
+        <h1 class="page-title">今日のタスク</h1>
+        <span class="page-date" id="today-date"></span>
       </div>
-
-      <!-- 達成率カード -->
-      <div class="stats-row">
-        <div class="stat-card accent">
-          <div class="stat-label">今日の達成率</div>
-          <div class="stat-value" id="todayRate">0%</div>
-          <div class="progress-bar"><div class="progress-fill" id="todayProgress"></div></div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">完了タスク</div>
-          <div class="stat-value" id="completedCount">0</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">残りタスク</div>
-          <div class="stat-value" id="remainingCount">0</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">週間達成率</div>
-          <div class="stat-value" id="weekRate">0%</div>
-        </div>
-        <div class="stat-card streak-card">
-          <div class="stat-label">🔥 連続達成</div>
-          <div class="stat-value" id="streakCount">0<span class="stat-unit">日</span></div>
-        </div>
+      <div class="widget-row" id="widget-row"></div>
+      <div id="today-task-list" class="task-cards"></div>
+      <div class="empty-state" id="today-empty" style="display:none">
+        <div class="empty-icon">📚</div>
+        <p>今日のタスクはありません</p>
+        <button class="btn-primary" onclick="openAddTask()">タスクを追加</button>
       </div>
+      <div class="section-divider"><span>締切が近いタスク</span></div>
+      <div id="deadline-list" class="deadline-chips"></div>
+    </section>
 
-      <!-- 今日のタスク -->
-      <section class="section">
-        <div class="section-header">
-          <h2>今日のタスク</h2>
-          <span class="badge" id="todayTaskCount">0件</span>
-        </div>
-        <div id="todayTasks" class="task-list"></div>
-        <div class="empty-state hidden" id="todayEmpty">
-          <p>🎉 今日のタスクはありません</p>
-          <button class="btn btn-outline" onclick="document.getElementById('addTaskBtn').click()">タスクを追加する</button>
-        </div>
-      </section>
-
-      <!-- 締切が近いタスク -->
-      <section class="section">
-        <div class="section-header">
-          <h2>⚠️ 締切が近いタスク</h2>
-        </div>
-        <div id="urgentTasks" class="task-list"></div>
-        <div class="empty-state hidden" id="urgentEmpty"><p>締切が近いタスクはありません</p></div>
-      </section>
-    </div>
-
-    <!-- タスク一覧ページ -->
-    <div class="page" id="page-tasks">
+    <!-- タスク一覧 -->
+    <section class="page hidden" id="page-tasks" data-page="tasks">
       <div class="page-header">
         <h1 class="page-title">タスク一覧</h1>
-        <button class="btn btn-primary" id="addTaskBtn2">＋ タスク追加</button>
+        <button class="btn-icon" onclick="openAddTask()" title="追加">＋</button>
       </div>
       <div class="filter-bar">
-        <input type="text" class="search-input" id="searchInput" placeholder="🔍 タスクを検索...">
-        <select class="filter-select" id="filterSubject">
-          <option value="">科目：すべて</option>
+        <input type="search" id="task-search" placeholder="検索… （/キー）" oninput="renderTaskList()">
+        <select id="task-filter-subject" onchange="renderTaskList()">
+          <option value="all">すべての科目</option>
         </select>
-        <select class="filter-select" id="filterStatus">
-          <option value="">状態：すべて</option>
+        <select id="task-filter-status" onchange="renderTaskList()">
+          <option value="all">すべて</option>
           <option value="active">進行中</option>
           <option value="completed">完了</option>
         </select>
-        <select class="filter-select" id="sortBy">
+        <select id="task-sort" onchange="renderTaskList()">
           <option value="deadline">締切順</option>
           <option value="priority">優先度順</option>
-          <option value="createdAt">作成順</option>
+          <option value="subject">科目順</option>
+          <option value="created">作成順</option>
         </select>
       </div>
-      <div id="allTasks" class="task-list"></div>
-    </div>
+      <div id="task-list" class="task-cards"></div>
+      <div class="empty-state" id="tasks-empty" style="display:none">
+        <div class="empty-icon">✏️</div>
+        <p>タスクがまだありません</p>
+        <button class="btn-primary" onclick="openAddTask()">最初のタスクを追加</button>
+      </div>
+    </section>
 
-    <!-- 週間予定ページ -->
-    <div class="page" id="page-week">
+    <!-- カレンダー & 時間割 -->
+    <section class="page hidden" id="page-calendar" data-page="calendar">
       <div class="page-header">
-        <h1 class="page-title">週間予定</h1>
-        <div class="header-actions">
-          <button class="btn btn-outline" id="weekPrev">＜</button>
-          <span class="date-badge" id="weekRangeLabel"></span>
-          <button class="btn btn-outline" id="weekNext">＞</button>
-          <button class="btn btn-outline" id="weekToday">今週</button>
+        <h1 class="page-title" id="cal-page-title">カレンダー</h1>
+        <div class="cal-main-toggle">
+          <button class="cal-main-btn active" data-main="calendar" onclick="setCalMain('calendar',this)">カレンダー</button>
+          <button class="cal-main-btn" data-main="timetable" onclick="setCalMain('timetable',this)">時間割</button>
         </div>
       </div>
-      <!-- 週間達成サマリー -->
-      <div class="week-summary" id="weekSummary"></div>
-      <!-- 7日グリッド -->
-      <div class="week-grid" id="weekGrid"></div>
-    </div>
 
-    <!-- カレンダーページ -->
-    <div class="page" id="page-calendar">
-      <div class="page-header">
-        <h1 class="page-title">カレンダー</h1>
-        <div class="view-toggle">
-          <button class="toggle-btn active" data-view="month">月</button>
-          <button class="toggle-btn" data-view="week">週</button>
-          <button class="toggle-btn" data-view="day">日</button>
+      <!-- カレンダービュー -->
+      <div id="calendar-section">
+        <div class="cal-sub-header">
+          <div class="cal-view-toggle">
+            <button class="cal-view-btn active" data-view="month" onclick="setCalView('month',this)">月</button>
+            <button class="cal-view-btn" data-view="week" onclick="setCalView('week',this)">週</button>
+            <button class="cal-view-btn" data-view="day" onclick="setCalView('day',this)">日</button>
+          </div>
+          <div class="cal-nav">
+            <button class="btn-icon" onclick="calNav(-1)">‹</button>
+            <span id="cal-title" class="cal-nav-title"></span>
+            <button class="btn-icon" onclick="calNav(1)">›</button>
+          </div>
         </div>
+        <div id="calendar-body"></div>
       </div>
-      <div class="calendar-nav">
-        <button class="btn btn-outline" id="calPrev">＜</button>
-        <h2 id="calTitle"></h2>
-        <button class="btn btn-outline" id="calNext">＞</button>
-        <button class="btn btn-outline" id="calToday">今日</button>
-      </div>
-      <div id="calendarView"></div>
-      <!-- タスク詳細ポップアップ -->
-      <div class="cal-popup hidden" id="calPopup">
-        <div class="cal-popup-inner" id="calPopupInner"></div>
-      </div>
-    </div>
 
-    <!-- ルーティン設定ページ -->
-    <div class="page" id="page-routine">
-      <div class="page-header">
-        <h1 class="page-title">ルーティン設定</h1>
-        <button class="btn btn-primary" id="addRoutineBtn">＋ 追加</button>
+      <!-- 時間割ビュー -->
+      <div id="timetable-section" class="hidden">
+        <div class="cal-sub-header">
+          <div class="cal-view-toggle">
+            <button class="cal-view-btn active" onclick="setTTRange('weekday',this)">月〜金</button>
+            <button class="cal-view-btn" onclick="setTTRange('all',this)">全曜日</button>
+          </div>
+        </div>
+        <div id="timetable-body"></div>
+        <div class="tt-today-classes" id="tt-today-classes"></div>
+        <div class="tt-legend" id="tt-legend"></div>
       </div>
-      <p class="page-desc">時間帯ごとに毎日のルーティンを設定します。ドラッグで順番を入れ替えられます。</p>
-      <div class="routine-blocks">
-        <div class="routine-block">
-          <div class="routine-block-header morning">🌅 朝のルーティン</div>
-          <div class="routine-list" id="routine-morning" data-slot="morning"></div>
-          <button class="btn btn-outline btn-sm routine-add-btn" data-slot="morning">＋ 追加</button>
-        </div>
-        <div class="routine-block">
-          <div class="routine-block-header afternoon">☀️ 昼のルーティン</div>
-          <div class="routine-list" id="routine-afternoon" data-slot="afternoon"></div>
-          <button class="btn btn-outline btn-sm routine-add-btn" data-slot="afternoon">＋ 追加</button>
-        </div>
-        <div class="routine-block">
-          <div class="routine-block-header evening">🌙 夜のルーティン</div>
-          <div class="routine-list" id="routine-evening" data-slot="evening"></div>
-          <button class="btn btn-outline btn-sm routine-add-btn" data-slot="evening">＋ 追加</button>
-        </div>
-      </div>
-    </div>
+    </section>
 
-    <!-- 統計ページ -->
-    <div class="page" id="page-stats">
+    <!-- 統計 -->
+    <section class="page hidden" id="page-stats" data-page="stats">
       <div class="page-header">
         <h1 class="page-title">統計</h1>
-        <div class="view-toggle">
-          <button class="toggle-btn active" data-period="week">週間</button>
-          <button class="toggle-btn" data-period="month">月間</button>
-        </div>
       </div>
-      <div class="stats-row">
-        <div class="stat-card accent">
-          <div class="stat-label">達成率</div>
-          <div class="stat-value" id="statsRate">0%</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">完了タスク</div>
-          <div class="stat-value" id="statsCompleted">0</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">勉強量</div>
-          <div class="stat-value" id="statsAmount">0</div>
-        </div>
+      <div class="stats-period-toggle">
+        <button class="period-btn active" onclick="setStatPeriod('today',this)">今日</button>
+        <button class="period-btn" onclick="setStatPeriod('week',this)">週間</button>
+        <button class="period-btn" onclick="setStatPeriod('month',this)">月間</button>
       </div>
-      <section class="section">
-        <h2>科目別達成率</h2>
-        <div id="subjectStats" class="subject-stats"></div>
-      </section>
-      <section class="section">
-        <h2>日別達成履歴</h2>
-        <div id="dailyChart" class="daily-chart"></div>
-      </section>
-    </div>
+      <div class="stats-grid" id="stats-grid"></div>
+      <div class="chart-wrap">
+        <h3 class="chart-title">直近7日の達成率</h3>
+        <div id="bar-chart" class="bar-chart"></div>
+      </div>
+      <div class="chart-wrap" style="margin-top:12px">
+        <h3 class="chart-title">科目別 学習量</h3>
+        <div id="subject-chart"></div>
+      </div>
+    </section>
 
-    <!-- 繰り返しタスクページ (Phase2) -->
-    <div class="page" id="page-repeat">
-      <div class="page-header">
-        <h1 class="page-title">繰り返しタスク</h1>
-        <button class="btn btn-primary" id="addRepeatBtn">＋ 繰り返し追加</button>
-      </div>
-      <div class="phase2-badge">✨ Phase2 新機能</div>
-      <div id="repeatTasks" class="task-list"></div>
-      <div class="empty-state" id="repeatEmpty">
-        <p>🔁 繰り返しタスクがありません</p>
-        <p class="hint">毎日の単語帳・問題集など、継続タスクに使えます</p>
-      </div>
-    </div>
-
-    <!-- 時間割ページ (Phase2) -->
-    <div class="page" id="page-timetable">
-      <div class="page-header">
-        <h1 class="page-title">時間割</h1>
-        <button class="btn btn-primary" id="addPeriodBtn">＋ 追加</button>
-      </div>
-      <div class="phase2-badge">✨ Phase2 新機能</div>
-      <div class="timetable-grid" id="timetableGrid"></div>
-    </div>
-
-    <!-- 設定ページ -->
-    <div class="page" id="page-settings">
+    <!-- 設定 -->
+    <section class="page hidden" id="page-settings" data-page="settings">
       <div class="page-header">
         <h1 class="page-title">設定</h1>
       </div>
-      <div class="settings-list">
-        <div class="settings-section">
-          <h2>テーマ</h2>
-          <div class="setting-item">
-            <span>ダークモード</span>
-            <label class="toggle-switch">
-              <input type="checkbox" id="darkModeToggle">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
+
+      <div class="settings-group">
+        <div class="setting-item setting-item--first">
+          <span>テーマ</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="theme-toggle" onchange="toggleTheme()">
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            <span class="toggle-label" id="theme-label">ダーク</span>
+          </label>
         </div>
-        <div class="settings-section">
-          <h2>通知</h2>
-          <div class="setting-item">
-            <span>ブラウザ通知</span>
-            <button class="btn btn-outline" id="notifBtn">許可する</button>
-          </div>
-        </div>
-        <div class="settings-section">
-          <h2>科目カラー (Phase2)</h2>
-          <div class="phase2-badge">✨ Phase2 新機能</div>
-          <div id="subjectColors" class="subject-color-list"></div>
-          <button class="btn btn-outline" id="addSubjectColorBtn">＋ 科目を追加</button>
-        </div>
-        <div class="settings-section">
-          <h2>データ管理 (Phase2)</h2>
-          <div class="phase2-badge">✨ Phase2 新機能</div>
-          <div class="setting-item">
-            <span>データをエクスポート (JSON)</span>
-            <button class="btn btn-outline" id="exportBtn">書き出し</button>
-          </div>
-          <div class="setting-item">
-            <span>データをインポート</span>
-            <label class="btn btn-outline" for="importFile">読み込み</label>
-            <input type="file" id="importFile" accept=".json" style="display:none">
-          </div>
-          <div class="setting-item danger">
-            <span>全データを削除</span>
-            <button class="btn btn-danger" id="clearDataBtn">削除</button>
-          </div>
+        <div class="setting-item setting-item--last">
+          <span>ブラウザ通知</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="notif-toggle" onchange="toggleNotif()">
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            <span class="toggle-label" id="notif-label">オフ</span>
+          </label>
         </div>
       </div>
-    </div>
+
+      <div class="settings-section-title">科目カラー</div>
+      <div class="settings-group">
+        <div id="subject-color-list"></div>
+        <div class="setting-item setting-item--last" style="padding:10px 16px">
+          <button class="btn-secondary" style="width:100%" onclick="openSubjectColorModal()">＋ 科目カラーを追加・編集</button>
+        </div>
+      </div>
+
+      <div class="settings-section-title">データ管理</div>
+      <div class="settings-group">
+        <div class="setting-item setting-item--first">
+          <span>JSONエクスポート</span>
+          <button class="btn-secondary" onclick="exportData()">書き出し</button>
+        </div>
+        <div class="setting-item">
+          <span>インポート</span>
+          <label class="btn-secondary" style="cursor:pointer;display:inline-block">
+            読み込み
+            <input type="file" accept=".json" onchange="importData(event)" style="display:none">
+          </label>
+        </div>
+        <div class="setting-item setting-item--last setting-item--danger">
+          <span>すべてのデータを削除</span>
+          <button class="btn-danger" onclick="clearAllData()">削除</button>
+        </div>
+      </div>
+
+      <div class="settings-section-title">ショートカット</div>
+      <div class="settings-group shortcut-list">
+        <div class="shortcut-item setting-item--first"><kbd>/</kbd><span>タスク検索にフォーカス</span></div>
+        <div class="shortcut-item"><kbd>N</kbd><span>タスクを追加</span></div>
+        <div class="shortcut-item"><kbd>1〜5</kbd><span>タブを切り替え</span></div>
+        <div class="shortcut-item setting-item--last"><kbd>Esc</kbd><span>モーダルを閉じる</span></div>
+      </div>
+
+      <p class="version-tag">StudyFlow v2.0 — Phase 2</p>
+    </section>
   </main>
 
-  <!-- タスク追加/編集モーダル -->
-  <div class="modal-overlay hidden" id="taskModal">
+  <!-- ボトムナビ -->
+  <nav class="bottom-nav">
+    <button class="nav-btn active" data-page="today" onclick="navigate('today',this)">
+      <span class="nav-icon">🏠</span><span class="nav-label">今日</span>
+    </button>
+    <button class="nav-btn" data-page="tasks" onclick="navigate('tasks',this)">
+      <span class="nav-icon">📋</span><span class="nav-label">タスク</span>
+    </button>
+    <button class="nav-fab" onclick="openAddTask()" title="タスク追加（Nキー）">＋</button>
+    <button class="nav-btn" data-page="calendar" onclick="navigate('calendar',this)">
+      <span class="nav-icon">📅</span><span class="nav-label">カレンダー</span>
+    </button>
+    <button class="nav-btn" data-page="stats" onclick="navigate('stats',this)">
+      <span class="nav-icon">📊</span><span class="nav-label">統計</span>
+    </button>
+  </nav>
+
+  <!-- ── モーダル群 ── -->
+
+  <!-- タスク追加/編集 -->
+  <div class="modal-overlay hidden" id="task-modal" onclick="closeModalOnBg(event)">
     <div class="modal">
       <div class="modal-header">
-        <h2 id="modalTitle">タスク追加</h2>
-        <button class="modal-close" id="modalClose">✕</button>
+        <h2 id="modal-title">タスクを追加</h2>
+        <button class="btn-icon" onclick="closeModal()">✕</button>
       </div>
       <div class="modal-body">
-        <div class="form-group">
-          <label>タイトル *</label>
-          <input type="text" id="taskTitle" placeholder="例：数学 章末問題">
+        <input type="hidden" id="edit-task-id">
+
+        <div class="field-group">
+          <label>タイトル <span class="req">*</span></label>
+          <input type="text" id="f-title" placeholder="例：英単語テスト対策" autocomplete="off">
         </div>
-        <div class="form-row">
-          <div class="form-group">
+
+        <div class="field-row">
+          <div class="field-group">
             <label>科目</label>
-            <input type="text" id="taskSubject" list="subjectList" placeholder="例：数学">
-            <datalist id="subjectList"></datalist>
+            <div class="subject-input-wrap">
+              <input type="text" id="f-subject" placeholder="例：英語" list="subject-datalist" autocomplete="off" oninput="onSubjectInput()">
+              <datalist id="subject-datalist"></datalist>
+              <span class="subject-color-dot" id="f-subject-dot"></span>
+            </div>
           </div>
-          <div class="form-group">
+          <div class="field-group">
             <label>優先度</label>
-            <select id="taskPriority">
+            <select id="f-priority">
               <option value="high">🔴 高</option>
               <option value="medium" selected>🟡 中</option>
               <option value="low">🟢 低</option>
             </select>
           </div>
         </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>総量</label>
-            <input type="number" id="taskTotal" placeholder="50" min="1">
-          </div>
-          <div class="form-group">
-            <label>単位</label>
-            <input type="text" id="taskUnit" placeholder="ページ・問・分">
-          </div>
-        </div>
-        <div class="form-group">
-          <label>締切</label>
-          <input type="date" id="taskDeadline">
-        </div>
-        <div class="form-group">
-          <label>メモ</label>
-          <textarea id="taskMemo" rows="3" placeholder="メモ・参考書名など"></textarea>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-outline" id="modalCancel">キャンセル</button>
-        <button class="btn btn-primary" id="modalSave">保存</button>
-      </div>
-    </div>
-  </div>
 
-  <!-- 繰り返しタスクモーダル (Phase2) -->
-  <div class="modal-overlay hidden" id="repeatModal">
-    <div class="modal">
-      <div class="modal-header">
-        <h2>繰り返しタスク追加</h2>
-        <button class="modal-close" id="repeatModalClose">✕</button>
-      </div>
-      <div class="modal-body">
-        <div class="form-group">
-          <label>タイトル *</label>
-          <input type="text" id="repeatTitle" placeholder="例：英単語10個">
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>科目</label>
-            <input type="text" id="repeatSubject" placeholder="例：英語">
+        <div class="field-row">
+          <div class="field-group">
+            <label>総量 <span class="req">*</span></label>
+            <input type="number" id="f-total" placeholder="50" min="1">
           </div>
-          <div class="form-group">
-            <label>1回の量</label>
-            <input type="number" id="repeatAmount" placeholder="10" min="1">
-          </div>
-          <div class="form-group">
+          <div class="field-group">
             <label>単位</label>
-            <input type="text" id="repeatUnit" placeholder="個">
+            <input type="text" id="f-unit" placeholder="ページ・問・分">
           </div>
         </div>
-        <div class="form-group">
+
+        <div class="field-group">
+          <label>締切 <span class="req">*</span></label>
+          <input type="date" id="f-deadline">
+        </div>
+
+        <div class="field-group">
           <label>繰り返し</label>
-          <div class="weekday-picker" id="weekdayPicker">
-            <button type="button" class="weekday-btn" data-day="0">日</button>
-            <button type="button" class="weekday-btn" data-day="1">月</button>
-            <button type="button" class="weekday-btn" data-day="2">火</button>
-            <button type="button" class="weekday-btn" data-day="3">水</button>
-            <button type="button" class="weekday-btn" data-day="4">木</button>
-            <button type="button" class="weekday-btn" data-day="5">金</button>
-            <button type="button" class="weekday-btn" data-day="6">土</button>
-          </div>
+          <select id="f-repeat" onchange="onRepeatChange()">
+            <option value="none">なし（一度きり）</option>
+            <option value="daily">毎日</option>
+            <option value="weekly">毎週</option>
+            <option value="monthly">毎月</option>
+            <option value="custom">曜日指定</option>
+          </select>
         </div>
-        <div class="form-group">
+
+        <div id="repeat-days-wrap" class="field-group hidden">
+          <label>曜日を選択</label>
+          <div class="dow-picker" id="dow-picker"></div>
+        </div>
+
+        <div id="repeat-end-wrap" class="field-group hidden">
+          <label>繰り返し終了日</label>
+          <input type="date" id="f-repeat-end">
+        </div>
+
+        <div class="field-group">
           <label>メモ</label>
-          <textarea id="repeatMemo" rows="2"></textarea>
+          <textarea id="f-memo" placeholder="参考書名・注意点など" rows="2"></textarea>
         </div>
+
+        <div class="split-preview" id="split-preview"></div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-outline" id="repeatModalCancel">キャンセル</button>
-        <button class="btn btn-primary" id="repeatModalSave">保存</button>
+        <button class="btn-secondary" onclick="closeModal()">キャンセル</button>
+        <button class="btn-primary" onclick="saveTask()">保存</button>
       </div>
     </div>
   </div>
 
-  <!-- 時間割コマ追加モーダル (Phase2) -->
-  <div class="modal-overlay hidden" id="periodModal">
+  <!-- 進捗更新 -->
+  <div class="modal-overlay hidden" id="progress-modal" onclick="closeProgressOnBg(event)">
     <div class="modal">
       <div class="modal-header">
-        <h2>時間割コマを追加</h2>
-        <button class="modal-close" id="periodModalClose">✕</button>
+        <h2 id="prog-modal-title">進捗を更新</h2>
+        <button class="btn-icon" onclick="closeProgressModal()">✕</button>
       </div>
       <div class="modal-body">
-        <div class="form-row">
-          <div class="form-group">
-            <label>曜日</label>
-            <select id="periodDay">
-              <option value="1">月</option>
-              <option value="2">火</option>
-              <option value="3">水</option>
-              <option value="4">木</option>
-              <option value="5">金</option>
-              <option value="6">土</option>
-              <option value="0">日</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>時限</label>
-            <select id="periodSlot">
-              <option value="1">1時限</option>
-              <option value="2">2時限</option>
-              <option value="3">3時限</option>
-              <option value="4">4時限</option>
-              <option value="5">5時限</option>
-              <option value="6">6時限</option>
-            </select>
-          </div>
+        <input type="hidden" id="prog-daily-id">
+        <div class="prog-info" id="prog-info"></div>
+        <div class="field-group" style="margin-top:8px">
+          <label>完了した量</label>
+          <input type="number" id="prog-amount" min="0" placeholder="0">
         </div>
-        <div class="form-group">
-          <label>科目名 *</label>
-          <input type="text" id="periodSubject" placeholder="例：数学II">
-        </div>
-        <div class="form-group">
-          <label>教室</label>
-          <input type="text" id="periodRoom" placeholder="例：3-A">
-        </div>
-        <div class="form-group">
-          <label>先生</label>
-          <input type="text" id="periodTeacher" placeholder="例：山田先生">
-        </div>
+        <div id="prog-quick-btns" class="prog-quick-btns"></div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-outline" id="periodModalCancel">キャンセル</button>
-        <button class="btn btn-primary" id="periodModalSave">保存</button>
+        <button class="btn-secondary" onclick="closeProgressModal()">キャンセル</button>
+        <button class="btn-primary" onclick="saveProgress()">更新</button>
       </div>
     </div>
   </div>
 
-  <!-- 科目色追加モーダル (Phase2) -->
-  <div class="modal-overlay hidden" id="subjectColorModal">
-    <div class="modal modal-sm">
+  <!-- 時間割セル -->
+  <div class="modal-overlay hidden" id="tt-modal" onclick="closeTTModalOnBg(event)">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="tt-modal-title">授業を設定</h2>
+        <button class="btn-icon" onclick="closeTTModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="tt-cell-key">
+        <div class="field-group">
+          <label>科目名</label>
+          <div class="subject-input-wrap">
+            <input type="text" id="tt-subject" list="subject-datalist" placeholder="例：数学" autocomplete="off" oninput="onTTSubjectInput()">
+            <span class="subject-color-dot" id="tt-subject-dot"></span>
+          </div>
+        </div>
+        <div class="field-group">
+          <label>教室・備考</label>
+          <input type="text" id="tt-room" placeholder="例：3A教室">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeTTModal()">キャンセル</button>
+        <button class="btn-danger" onclick="deleteTTCell()">削除</button>
+        <button class="btn-primary" onclick="saveTTCell()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 科目カラー設定 -->
+  <div class="modal-overlay hidden" id="subject-color-modal" onclick="closeSubjectColorModalOnBg(event)">
+    <div class="modal">
       <div class="modal-header">
         <h2>科目カラー設定</h2>
-        <button class="modal-close" id="scModalClose">✕</button>
+        <button class="btn-icon" onclick="closeSubjectColorModal()">✕</button>
       </div>
       <div class="modal-body">
-        <div class="form-group">
-          <label>科目名</label>
-          <input type="text" id="scSubject" placeholder="例：数学">
-        </div>
-        <div class="form-group">
-          <label>カラー</label>
-          <input type="color" id="scColor" value="#4f86f7">
+        <div id="subject-color-editor"></div>
+        <div class="subject-color-add-row">
+          <div class="field-row" style="margin-top:4px">
+            <div class="field-group">
+              <label>科目名</label>
+              <input type="text" id="new-subject-name" placeholder="例：物理">
+            </div>
+            <div class="field-group">
+              <label>カラー</label>
+              <input type="color" id="new-subject-color" value="#38BDF8">
+            </div>
+          </div>
+          <button class="btn-primary" style="width:100%;margin-top:8px" onclick="addSubjectColor()">＋ 追加</button>
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-outline" id="scModalCancel">キャンセル</button>
-        <button class="btn btn-primary" id="scModalSave">保存</button>
+        <button class="btn-primary" onclick="closeSubjectColorModal()">完了</button>
       </div>
     </div>
   </div>
 
-  <!-- 進捗更新モーダル -->
-  <div class="modal-overlay hidden" id="progressModal">
-    <div class="modal modal-sm">
-      <div class="modal-header">
-        <h2>進捗を更新</h2>
-        <button class="modal-close" id="progressModalClose">✕</button>
-      </div>
-      <div class="modal-body">
-        <p id="progressTaskTitle" class="modal-task-title"></p>
-        <div class="form-group">
-          <label>今日の完了量</label>
-          <div class="progress-input-row">
-            <input type="number" id="progressAmount" min="0" placeholder="0">
-            <span id="progressUnit"></span>
-          </div>
-        </div>
-        <div class="progress-info" id="progressInfo"></div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-outline" id="progressModalCancel">キャンセル</button>
-        <button class="btn btn-primary" id="progressModalSave">更新</button>
-      </div>
-    </div>
-  </div>
+  <div class="toast hidden" id="toast"></div>
 
-  <!-- ルーティン追加モーダル -->
-  <div class="modal-overlay hidden" id="routineModal">
-    <div class="modal modal-sm">
-      <div class="modal-header">
-        <h2 id="routineModalTitle">ルーティン追加</h2>
-        <button class="modal-close" id="routineModalClose">✕</button>
-      </div>
-      <div class="modal-body">
-        <div class="form-group">
-          <label>内容 *</label>
-          <input type="text" id="routineContent" placeholder="例：英単語10個を確認">
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>所要時間（分）</label>
-            <input type="number" id="routineDuration" placeholder="15" min="1" max="480">
-          </div>
-          <div class="form-group">
-            <label>科目タグ</label>
-            <input type="text" id="routineSubject" placeholder="例：英語">
-          </div>
-        </div>
-        <input type="hidden" id="routineSlot">
-        <input type="hidden" id="routineEditId">
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-outline" id="routineModalCancel">キャンセル</button>
-        <button class="btn btn-primary" id="routineModalSave">保存</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- トースト通知 -->
-  <div class="toast-container" id="toastContainer"></div>
-
-  <script src="js/bundle.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>

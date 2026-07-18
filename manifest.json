@@ -1,0 +1,17 @@
+{
+  "name": "StudyFlow",
+  "short_name": "StudyFlow",
+  "description": "勉強スケジュール管理アプリ",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0F172A",
+  "theme_color": "#0F172A",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' rx='40' fill='%230F172A'/><text y='130' x='20' font-size='130'>📚</text></svg>",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    }
+  ]
+}
