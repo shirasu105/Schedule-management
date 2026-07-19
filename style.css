@@ -640,3 +640,191 @@ kbd {
 .pwa-banner-text { flex: 1; line-height: 1.4; }
 .pwa-banner-text strong { display: block; color: var(--accent); margin-bottom: 2px; }
 .pwa-banner-close { color: var(--sub); font-size: 18px; padding: 0 4px; }
+
+/* ============================================================
+   StudyFlow v2.1 — 新機能スタイル
+   ============================================================ */
+
+/* === 週間目標バー === */
+.weekly-goal-bar { margin-bottom: 4px; }
+.wg-empty {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--bg2); border: 1px dashed var(--border);
+  border-radius: var(--r); padding: 12px 16px;
+  color: var(--sub); font-size: 13px;
+}
+.wg-bar-wrap {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--r); padding: 14px 16px;
+}
+.wg-bar-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.wg-label { font-size: 13px; color: var(--sub); }
+.wg-current { font-size: 13px; font-weight: 700; color: var(--accent); }
+.wg-track { height: 8px; background: var(--bg3); border-radius: 4px; overflow: hidden; margin-bottom: 10px; }
+.wg-fill {
+  height: 100%; border-radius: 4px;
+  background: linear-gradient(90deg, var(--accent), var(--green));
+  transition: width .6s cubic-bezier(.4,0,.2,1);
+}
+.wg-fill.complete { background: linear-gradient(90deg, var(--green), #4ade80); }
+.wg-sub {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  font-size: 12px; color: var(--sub);
+}
+.wg-sub .btn-icon { width: 24px; height: 24px; font-size: 12px; }
+
+/* === ポモドーロモーダル === */
+.pom-task-label {
+  text-align: center; font-size: 13px; font-weight: 600;
+  color: var(--sub); margin-bottom: 4px; min-height: 20px;
+}
+.pom-circle-wrap {
+  position: relative; width: 160px; height: 160px;
+  margin: 0 auto 16px;
+}
+.pom-ring {
+  width: 160px; height: 160px;
+  transform: rotate(-90deg);
+}
+.pom-ring-bg {
+  fill: none; stroke: var(--bg3); stroke-width: 8;
+}
+.pom-ring-fill {
+  fill: none; stroke: var(--accent); stroke-width: 8;
+  stroke-linecap: round;
+  transition: stroke-dashoffset .9s linear;
+}
+.pom-time {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%,-55%);
+  font-size: 36px; font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.pom-phase {
+  position: absolute; bottom: 22px; left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px; font-weight: 700;
+  color: var(--sub); letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.pom-mode-toggle {
+  display: flex; gap: 6px; justify-content: center; margin-bottom: 12px;
+}
+.pom-mode-btn {
+  padding: 6px 13px; border-radius: 8px; font-size: 13px; font-weight: 600;
+  background: var(--bg3); border: 1px solid var(--border); color: var(--sub);
+  transition: all .15s; cursor: pointer;
+}
+.pom-mode-btn.active { background: var(--accent); border-color: var(--accent); color: #0F172A; }
+.pom-custom-row {
+  display: flex; align-items: center; gap: 8px;
+  justify-content: center; margin-bottom: 10px;
+}
+.pom-custom-row input { width: 80px; text-align: center; }
+.pom-log-wrap { margin-top: 10px; }
+.pom-log-title {
+  font-size: 12px; font-weight: 700; color: var(--sub);
+  text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px;
+}
+.pom-log-list { display: flex; flex-direction: column; gap: 4px; }
+.pom-log-item {
+  display: flex; gap: 10px; align-items: center;
+  font-size: 13px; padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+.pom-log-item:last-child { border-bottom: none; }
+
+/* ポモドーロ フローティングバー */
+.pom-float {
+  position: fixed;
+  top: calc(var(--gauge-h) + 6px);
+  right: 12px;
+  background: var(--bg2);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 6px 14px;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 14px; font-weight: 700;
+  z-index: 99;
+  cursor: pointer;
+  box-shadow: 0 2px 12px rgba(56,189,248,.25);
+  animation: slideDown .25s ease;
+}
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.pom-float-time { font-variant-numeric: tabular-nums; color: var(--accent); }
+.pom-float-label { font-size: 11px; color: var(--sub); font-weight: 600; }
+
+/* === 勉強ログ === */
+.log-hist-title {
+  font-size: 12px; font-weight: 700; color: var(--sub);
+  text-transform: uppercase; letter-spacing: .06em;
+  margin-top: 14px; margin-bottom: 8px;
+}
+.log-date-group { margin-bottom: 12px; }
+.log-date-label {
+  font-size: 11px; font-weight: 700; color: var(--sub);
+  text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px;
+}
+.log-item {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; padding: 7px 10px;
+  background: var(--bg3); border-radius: 8px; margin-bottom: 4px;
+}
+.log-min { font-weight: 700; color: var(--accent); min-width: 36px; }
+.log-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-note-txt { font-size: 11px; color: var(--sub); }
+.log-del { color: var(--sub); font-size: 14px; padding: 0 4px; flex-shrink: 0; }
+.log-del:hover { color: var(--red); }
+
+/* === 週間目標モーダル === */
+.goal-preview {
+  background: var(--bg3); border-radius: 10px;
+  padding: 12px 16px; font-size: 15px;
+  text-align: center; min-height: 44px;
+}
+.goal-prev-text { color: var(--text); line-height: 1.6; }
+
+/* === タスク詳細モーダル === */
+.detail-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.detail-progress-wrap { margin-bottom: 14px; }
+.detail-memo {
+  background: var(--bg3); border-radius: 10px;
+  padding: 12px 14px; margin-bottom: 14px;
+  font-size: 13px; line-height: 1.7;
+}
+.detail-memo strong { color: var(--sub); font-size: 12px; display: block; margin-bottom: 4px; }
+.detail-stats-row {
+  display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin-bottom: 14px;
+}
+.detail-stat {
+  background: var(--bg3); border-radius: 10px; padding: 10px;
+  text-align: center;
+}
+.detail-stat-val { font-size: 22px; font-weight: 800; color: var(--accent); }
+.detail-stat-lbl { font-size: 11px; color: var(--sub); margin-top: 2px; }
+.detail-hist-title {
+  font-size: 12px; font-weight: 700; color: var(--sub);
+  text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px;
+}
+.detail-hist { display: flex; flex-direction: column; gap: 5px; }
+.detail-hist-row { display: flex; align-items: center; gap: 8px; }
+.detail-hist-date { font-size: 12px; color: var(--sub); min-width: 38px; }
+.detail-hist-bar-wrap { flex: 1; height: 6px; background: var(--bg3); border-radius: 3px; overflow: hidden; }
+.detail-hist-bar { height: 100%; border-radius: 3px; transition: width .4s ease; }
+.detail-hist-amt { font-size: 12px; color: var(--sub); min-width: 44px; text-align: right; }
+.detail-hist-amt.done { color: var(--green); font-weight: 700; }
+
+/* === カードアクションボタン群 === */
+.card-action-btns { display: flex; gap: 4px; flex-shrink: 0; align-items: center; }
+.pom-quick-btn { font-size: 14px !important; }
+
+/* === スワイプヒント === */
+.swipe-hint {
+  text-align: center; font-size: 11px; color: var(--border);
+  margin-top: 8px; margin-bottom: -4px;
+  letter-spacing: .04em;
+}
