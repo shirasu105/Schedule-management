@@ -31,19 +31,28 @@
     <section class="page" id="page-today" data-page="today">
       <div class="page-header">
         <h1 class="page-title">今日のタスク</h1>
-        <span class="page-date" id="today-date"></span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <span class="page-date" id="today-date"></span>
+          <button class="focus-mode-btn" onclick="openFocusMode()" title="集中モード">🎯</button>
+        </div>
       </div>
+
+      <!-- クイック入力バー -->
+      <div class="quick-input-wrap">
+        <input type="text" id="quick-input" class="quick-input"
+          placeholder="クイック入力: 「英語 単語50 金曜」「数学 プリント3枚 明日 高」"
+          autocomplete="off" onkeydown="onQuickInputKey(event)">
+        <button class="quick-input-btn" onclick="submitQuickInput()">追加</button>
+      </div>
+      <div class="quick-preview hidden" id="quick-preview"></div>
+
       <div class="widget-row" id="widget-row"></div>
-      <p class="swipe-hint" id="swipe-hint">← 左スワイプで進捗入力 ／ 右スワイプで完了 →</p>
       <div id="today-task-list" class="task-cards"></div>
       <div class="empty-state" id="today-empty" style="display:none">
         <div class="empty-icon">📚</div>
         <p>今日のタスクはありません</p>
         <button class="btn-primary" onclick="openAddTask()">タスクを追加</button>
       </div>
-      <div class="section-divider"><span>今週の目標</span></div>
-      <div id="weekly-goal-bar" class="weekly-goal-bar"></div>
-
       <div class="section-divider"><span>締切が近いタスク</span></div>
       <div id="deadline-list" class="deadline-chips"></div>
     </section>
@@ -54,22 +63,37 @@
         <h1 class="page-title">タスク一覧</h1>
         <button class="btn-icon" onclick="openAddTask()" title="追加">＋</button>
       </div>
-      <div class="filter-bar">
-        <input type="search" id="task-search" placeholder="検索… （/キー）" oninput="renderTaskList()">
-        <select id="task-filter-subject" onchange="renderTaskList()">
-          <option value="all">すべての科目</option>
-        </select>
-        <select id="task-filter-status" onchange="renderTaskList()">
-          <option value="all">すべて</option>
-          <option value="active">進行中</option>
-          <option value="completed">完了</option>
-        </select>
-        <select id="task-sort" onchange="renderTaskList()">
-          <option value="deadline">締切順</option>
-          <option value="priority">優先度順</option>
-          <option value="subject">科目順</option>
-          <option value="created">作成順</option>
-        </select>
+      <!-- タブ: 進行中 / アーカイブ -->
+      <div class="task-tab-bar">
+        <button class="task-tab active" id="tab-active" onclick="switchTaskTab('active',this)">進行中</button>
+        <button class="task-tab" id="tab-archived" onclick="switchTaskTab('archived',this)">アーカイブ <span class="archive-count" id="archive-count"></span></button>
+      </div>
+
+      <div id="task-active-section">
+        <div class="filter-bar">
+          <input type="search" id="task-search" placeholder="検索… （/キー）" oninput="renderTaskList()">
+          <select id="task-filter-subject" onchange="renderTaskList()">
+            <option value="all">すべての科目</option>
+          </select>
+          <select id="task-filter-status" onchange="renderTaskList()">
+            <option value="all">すべて</option>
+            <option value="active">進行中</option>
+            <option value="completed">完了</option>
+          </select>
+          <select id="task-sort" onchange="renderTaskList()">
+            <option value="deadline">締切順</option>
+            <option value="priority">優先度順</option>
+            <option value="subject">科目順</option>
+            <option value="created">作成順</option>
+          </select>
+        </div>
+      </div>
+      <div id="task-archived-section" class="hidden">
+        <div class="archive-header">
+          <span>完了・期限切れタスクの保管庫</span>
+          <button class="btn-danger" style="font-size:12px;padding:5px 10px" onclick="clearArchive()">全削除</button>
+        </div>
+        <div id="archived-task-list" class="task-cards"></div>
       </div>
       <div id="task-list" class="task-cards"></div>
       <div class="empty-state" id="tasks-empty" style="display:none">
@@ -156,12 +180,25 @@
             <span class="toggle-label" id="theme-label">ダーク</span>
           </label>
         </div>
-        <div class="setting-item setting-item--last">
+        <div class="setting-item">
           <span>ブラウザ通知</span>
           <label class="toggle-switch">
             <input type="checkbox" id="notif-toggle" onchange="toggleNotif()">
             <span class="toggle-track"><span class="toggle-thumb"></span></span>
             <span class="toggle-label" id="notif-label">オフ</span>
+          </label>
+        </div>
+        <div class="setting-item" id="notif-time-row" style="display:none">
+          <span style="font-size:13px">朝の通知時刻</span>
+          <input type="time" id="notif-time" value="08:00" onchange="saveNotifTime()"
+            style="width:auto;padding:6px 10px;font-size:14px;font-weight:700">
+        </div>
+        <div class="setting-item setting-item--last" id="notif-deadline-row" style="display:none">
+          <span style="font-size:13px">締切前日通知</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="notif-deadline-toggle" onchange="saveNotifDeadline()">
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            <span class="toggle-label" id="notif-deadline-label">オフ</span>
           </label>
         </div>
       </div>
@@ -193,32 +230,17 @@
         </div>
       </div>
 
-      <div class="settings-section-title">学習機能</div>
-      <div class="settings-group">
-        <div class="setting-item setting-item--first">
-          <span>🍅 ポモドーロタイマー</span>
-          <button class="btn-secondary" onclick="openPomModal()">開く</button>
-        </div>
-        <div class="setting-item">
-          <span>📖 勉強ログ</span>
-          <button class="btn-secondary" onclick="openLogModal()">記録・確認</button>
-        </div>
-        <div class="setting-item setting-item--last">
-          <span>🎯 週間目標</span>
-          <button class="btn-secondary" onclick="openGoalModal()">設定</button>
-        </div>
-      </div>
-
       <div class="settings-section-title">ショートカット</div>
       <div class="settings-group shortcut-list">
         <div class="shortcut-item setting-item--first"><kbd>/</kbd><span>タスク検索にフォーカス</span></div>
         <div class="shortcut-item"><kbd>N</kbd><span>タスクを追加</span></div>
-        <div class="shortcut-item"><kbd>P</kbd><span>ポモドーロタイマー</span></div>
+        <div class="shortcut-item"><kbd>F</kbd><span>集中モード</span></div>
+        <div class="shortcut-item"><kbd>Q</kbd><span>クイック入力にフォーカス</span></div>
         <div class="shortcut-item"><kbd>1〜5</kbd><span>タブを切り替え</span></div>
         <div class="shortcut-item setting-item--last"><kbd>Esc</kbd><span>モーダルを閉じる</span></div>
       </div>
 
-      <p class="version-tag">StudyFlow v2.1 — Phase 2+</p>
+      <p class="version-tag">StudyFlow v2.1</p>
     </section>
   </main>
 
@@ -407,141 +429,38 @@
     </div>
   </div>
 
-  <!-- ポモドーロタイマー -->
-  <div class="modal-overlay hidden" id="pom-modal" onclick="closePomOnBg(event)">
-    <div class="modal">
-      <div class="modal-header">
-        <h2>🍅 ポモドーロタイマー</h2>
-        <button class="btn-icon" onclick="closePomModal()">✕</button>
-      </div>
-      <div class="modal-body">
-        <div class="pom-task-label" id="pom-task-label">タスクを選択してください</div>
-        <div class="pom-circle-wrap">
-          <svg class="pom-ring" viewBox="0 0 120 120">
-            <circle class="pom-ring-bg" cx="60" cy="60" r="52"/>
-            <circle class="pom-ring-fill" id="pom-ring-fill" cx="60" cy="60" r="52"
-              stroke-dasharray="326.7" stroke-dashoffset="0"/>
-          </svg>
-          <div class="pom-time" id="pom-time">25:00</div>
-          <div class="pom-phase" id="pom-phase">集中</div>
-        </div>
-        <div class="pom-mode-toggle">
-          <button class="pom-mode-btn active" data-min="25" onclick="setPomMode(25,'集中',this)">25分</button>
-          <button class="pom-mode-btn" data-min="5" onclick="setPomMode(5,'短休憩',this)">5分</button>
-          <button class="pom-mode-btn" data-min="15" onclick="setPomMode(15,'長休憩',this)">15分</button>
-          <button class="pom-mode-btn" data-min="0" onclick="setPomMode(0,'カスタム',this)">カスタム</button>
-        </div>
-        <div class="pom-custom-row hidden" id="pom-custom-row">
-          <input type="number" id="pom-custom-min" min="1" max="120" value="30" placeholder="分">
-          <span style="color:var(--sub);font-size:14px">分</span>
-          <button class="btn-secondary" onclick="applyCustomPom()">セット</button>
-        </div>
-        <div class="field-group" style="margin-top:4px">
-          <label>対象タスク</label>
-          <select id="pom-task-select" onchange="onPomTaskSelect()">
-            <option value="">なし（フリー集中）</option>
-          </select>
-        </div>
-        <div class="pom-log-wrap" id="pom-log-wrap"></div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn-secondary" onclick="resetPom()">リセット</button>
-        <button class="btn-primary" id="pom-start-btn" onclick="togglePom()">▶ スタート</button>
-      </div>
+  <!-- 集中モード -->
+  <div class="focus-overlay hidden" id="focus-overlay">
+    <div class="focus-header">
+      <span class="focus-period-badge" id="focus-period-badge"></span>
+      <button class="focus-close" onclick="closeFocusMode()">✕ 終了</button>
     </div>
+    <div class="focus-task-wrap" id="focus-task-wrap"></div>
+    <div class="focus-nav">
+      <button class="focus-nav-btn" id="focus-prev" onclick="focusNav(-1)">‹ 前</button>
+      <span class="focus-counter" id="focus-counter"></span>
+      <button class="focus-nav-btn" id="focus-next" onclick="focusNav(1)">次 ›</button>
+    </div>
+    <div class="focus-progress-row" id="focus-progress-row"></div>
   </div>
 
-  <!-- 勉強ログ入力 -->
-  <div class="modal-overlay hidden" id="log-modal" onclick="closeLogOnBg(event)">
+  <!-- クイック入力 確認モーダル -->
+  <div class="modal-overlay hidden" id="quick-confirm-modal" onclick="closeQuickConfirmOnBg(event)">
     <div class="modal">
       <div class="modal-header">
-        <h2>📖 勉強ログ</h2>
-        <button class="btn-icon" onclick="closeLogModal()">✕</button>
+        <h2>⚡ クイック入力の確認</h2>
+        <button class="btn-icon" onclick="closeQuickConfirm()">✕</button>
       </div>
-      <div class="modal-body">
-        <div class="field-group">
-          <label>科目 / タスク</label>
-          <select id="log-task-select">
-            <option value="">— 科目を選択 —</option>
-          </select>
-        </div>
-        <div class="field-row">
-          <div class="field-group">
-            <label>勉強時間（分）</label>
-            <input type="number" id="log-minutes" min="1" max="600" placeholder="60">
-          </div>
-          <div class="field-group">
-            <label>日付</label>
-            <input type="date" id="log-date">
-          </div>
-        </div>
-        <div class="field-group">
-          <label>メモ</label>
-          <textarea id="log-note" rows="2" placeholder="今日やったこと、気づき…"></textarea>
-        </div>
-        <div class="log-history" id="log-history"></div>
-      </div>
+      <div class="modal-body" id="quick-confirm-body"></div>
       <div class="modal-footer">
-        <button class="btn-secondary" onclick="closeLogModal()">キャンセル</button>
-        <button class="btn-primary" onclick="saveLog()">記録する</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 週間目標設定 -->
-  <div class="modal-overlay hidden" id="goal-modal" onclick="closeGoalOnBg(event)">
-    <div class="modal">
-      <div class="modal-header">
-        <h2>🎯 週間目標を設定</h2>
-        <button class="btn-icon" onclick="closeGoalModal()">✕</button>
-      </div>
-      <div class="modal-body">
-        <div class="field-row">
-          <div class="field-group">
-            <label>目標（数値）</label>
-            <input type="number" id="goal-target" min="0" placeholder="例：10">
-          </div>
-          <div class="field-group">
-            <label>単位</label>
-            <select id="goal-unit">
-              <option value="時間">時間</option>
-              <option value="タスク完了">タスク完了</option>
-              <option value="ポモドーロ">ポモドーロ</option>
-            </select>
-          </div>
-        </div>
-        <div class="goal-preview" id="goal-preview"></div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn-secondary" onclick="closeGoalModal()">キャンセル</button>
-        <button class="btn-primary" onclick="saveGoal()">保存</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- タスク詳細 -->
-  <div class="modal-overlay hidden" id="detail-modal" onclick="closeDetailOnBg(event)">
-    <div class="modal">
-      <div class="modal-header">
-        <h2 id="detail-modal-title">タスク詳細</h2>
-        <button class="btn-icon" onclick="closeDetailModal()">✕</button>
-      </div>
-      <div class="modal-body" id="detail-modal-body"></div>
-      <div class="modal-footer">
-        <button class="btn-secondary" onclick="closeDetailModal()">閉じる</button>
-        <button class="btn-primary" id="detail-edit-btn">編集</button>
+        <button class="btn-secondary" onclick="closeQuickConfirm()">キャンセル</button>
+        <button class="btn-secondary" onclick="editQuickTask()">修正して追加</button>
+        <button class="btn-primary" onclick="confirmQuickAdd()">このまま追加</button>
       </div>
     </div>
   </div>
 
   <div class="toast hidden" id="toast"></div>
-
-  <!-- ポモドーロフローティングバー -->
-  <div class="pom-float hidden" id="pom-float" onclick="openPomModal()">
-    <span class="pom-float-icon">🍅</span>
-    <span class="pom-float-time" id="pom-float-time">25:00</span>
-    <span class="pom-float-label" id="pom-float-label">集中</span>
-  </div>
 
   <script type="module" src="app.js"></script>
 </body>

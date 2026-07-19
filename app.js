@@ -33,15 +33,13 @@ const DOW_JA = ['日','月','火','水','木','金','土'];
 
 // ─── ストレージ ──────────────────────────────────────────────
 const KEYS = {
-  tasks:     'sf_tasks',
-  daily:     'sf_daily',
-  stats:     'sf_stats',
-  settings:  'sf_settings',
-  timetable: 'sf_timetable',   // {"dow-period": {subject, room}}
-  subjects:  'sf_subjects',    // {name: "#hexcolor"}
-  goals:     'sf_goals',       // { weeklyTarget, weeklyUnit }
-  studyLog:  'sf_studylog',    // [{date, taskId, minutes, note}]
-  pomState:  'sf_pom_state',   // 一時保存（セッション）
+  tasks:    'sf_tasks',
+  daily:    'sf_daily',
+  stats:    'sf_stats',
+  settings: 'sf_settings',
+  timetable:'sf_timetable',
+  subjects: 'sf_subjects',
+  archive:  'sf_archive',   // 完了・期限切れタスクの保管庫
 };
 function load(key) { try { return JSON.parse(localStorage.getItem(key)||'null'); } catch { return null; } }
 function save(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
@@ -49,11 +47,10 @@ function save(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
 // ─── 状態 ────────────────────────────────────────────────────
 let tasks      = load(KEYS.tasks)     || [];
 let daily      = load(KEYS.daily)     || [];
-let settings   = load(KEYS.settings)  || { theme:'dark', notif:false };
+let settings   = load(KEYS.settings)  || { theme:'dark', notif:false, notifTime:'08:00', notifDeadline:false };
 let timetable  = load(KEYS.timetable) || {};
 let subjectMap = load(KEYS.subjects)  || {};
-let goals      = load(KEYS.goals)     || { weeklyTarget: 0, weeklyUnit: '時間' };
-let studyLog   = load(KEYS.studyLog)  || [];
+let archive    = load(KEYS.archive)   || [];   // アーカイブ済みタスク
 
 const DEFAULT_COLORS = [
   '#38BDF8','#22C55E','#EAB308','#EF4444',
@@ -75,8 +72,7 @@ const saveTasks     = () => save(KEYS.tasks,     tasks);
 const saveDaily     = () => save(KEYS.daily,     daily);
 const saveSubjects  = () => save(KEYS.subjects,  subjectMap);
 const saveTimetable = () => save(KEYS.timetable, timetable);
-const saveGoals     = () => save(KEYS.goals,     goals);
-const saveStudyLog  = () => save(KEYS.studyLog,  studyLog);
+const saveArchive   = () => save(KEYS.archive,   archive);
 
 // ─── 連続達成日数 ────────────────────────────────────────────
 function calcStreak() {
@@ -134,7 +130,12 @@ document.addEventListener('keydown', e => {
     setTimeout(() => $('task-search')?.focus(), 100);
   }
   if (e.key === 'n' || e.key === 'N') { e.preventDefault(); openAddTask(); }
-  if (e.key === 'p' || e.key === 'P') { e.preventDefault(); openPomModal(); }
+  if (e.key === 'f' || e.key === 'F') { e.preventDefault(); openFocusMode(); }
+  if (e.key === 'q' || e.key === 'Q') {
+    e.preventDefault();
+    navigate('today', null);
+    setTimeout(() => $('quick-input')?.focus(), 100);
+  }
   if (e.key === '1') navigate('today',    null);
   if (e.key === '2') navigate('tasks',    null);
   if (e.key === '3') navigate('calendar', null);
@@ -143,9 +144,9 @@ document.addEventListener('keydown', e => {
 });
 
 function closeAllModals() {
-  ['task-modal','progress-modal','tt-modal','subject-color-modal',
-   'pom-modal','log-modal','goal-modal','detail-modal']
+  ['task-modal','progress-modal','tt-modal','subject-color-modal','quick-confirm-modal']
     .forEach(id => $(id)?.classList.add('hidden'));
+  closeFocusMode?.();
 }
 
 // ─── タスク CRUD ─────────────────────────────────────────────
@@ -360,11 +361,7 @@ function renderToday() {
               ${task.deadline ? `<span class="tag${(daysLeft(task.deadline)??99) <= 1 ? ' deadline-near' : ''}">締切 ${fmtDate(task.deadline)}</span>` : ''}
             </div>
           </div>
-          <div class="card-action-btns">
-            ${task.memo ? `<button class="btn-icon" onclick="toggleMemo('${cardId}')" title="メモ">📝</button>` : ''}
-            <button class="btn-icon" onclick="openDetailModal('${task.id}')" title="詳細">📋</button>
-            ${!isDone ? `<button class="btn-icon pom-quick-btn" onclick="openPomForTask('${task.id}')" title="ポモドーロ">🍅</button>` : ''}
-          </div>
+          ${task.memo ? `<button class="btn-icon" onclick="toggleMemo('${cardId}')" title="メモ">📝</button>` : ''}
         </div>
         ${task.memo ? `<div class="task-memo">${esc(task.memo)}</div>` : ''}
         <div class="task-progress">
@@ -378,12 +375,10 @@ function renderToday() {
           ${!isDone ? `<div class="progress-update-row"><button class="btn-progress" onclick="openProgressModal('${entry.id}')">進捗を入力</button></div>` : ''}
         </div>`;
       list.appendChild(card);
-      initSwipe(card, entry.id);
     });
   }
 
   renderDeadlines();
-  renderWeeklyGoalBar();
 }
 
 function renderWidgets(todayEntries, done, total, pct, streak) {
@@ -1116,7 +1111,6 @@ function renderStats() {
 
   renderBarChart();
   renderSubjectChart(entries);
-  renderStudyLogStats();
 }
 
 function renderBarChart() {
@@ -1176,7 +1170,21 @@ function renderSettings() {
   $('theme-label').textContent = isDark ? 'ダーク' : 'ライト';
   notifToggle.checked = settings.notif;
   $('notif-label').textContent = settings.notif ? 'オン' : 'オフ';
+  // 通知時刻行の表示切替
+  const notifRows = ['notif-time-row','notif-deadline-row'];
+  notifRows.forEach(id => {
+    const el = $(id);
+    if (el) el.style.display = settings.notif ? '' : 'none';
+  });
+  if ($('notif-time'))  $('notif-time').value = settings.notifTime || '08:00';
+  const dlToggle = $('notif-deadline-toggle');
+  if (dlToggle) {
+    dlToggle.checked = !!settings.notifDeadline;
+    const lbl = $('notif-deadline-label');
+    if (lbl) lbl.textContent = settings.notifDeadline ? 'オン' : 'オフ';
+  }
   renderSubjectColorList();
+  updateArchiveCount();
 }
 
 window.toggleTheme = function() {
@@ -1194,12 +1202,31 @@ window.toggleNotif = function() {
       $('notif-label').textContent = settings.notif ? 'オン' : 'オフ';
       save(KEYS.settings, settings);
       if (settings.notif) scheduleNotifications();
+      ['notif-time-row','notif-deadline-row'].forEach(id => {
+        const el=$(id); if(el) el.style.display = settings.notif ? '' : 'none';
+      });
     });
   } else {
     settings.notif = false;
     $('notif-label').textContent = 'オフ';
     save(KEYS.settings, settings);
+    ['notif-time-row','notif-deadline-row'].forEach(id => {
+      const el=$(id); if(el) el.style.display='none';
+    });
   }
+};
+
+window.saveNotifTime = function() {
+  settings.notifTime = $('notif-time')?.value || '08:00';
+  save(KEYS.settings, settings);
+  showToast(`🔔 朝 ${settings.notifTime} に通知します`);
+};
+
+window.saveNotifDeadline = function() {
+  settings.notifDeadline = !!$('notif-deadline-toggle')?.checked;
+  const lbl = $('notif-deadline-label');
+  if (lbl) lbl.textContent = settings.notifDeadline ? 'オン' : 'オフ';
+  save(KEYS.settings, settings);
 };
 
 // 科目カラーリスト（設定ページ内）
@@ -1274,7 +1301,7 @@ window.addSubjectColor = function() {
 
 // ─── データ管理 ──────────────────────────────────────────────
 window.exportData = function() {
-  const data = { tasks, daily, timetable, subjects:subjectMap, stats:load(KEYS.stats)||[], version:2 };
+  const data = { tasks, daily, timetable, subjects:subjectMap, stats:load(KEYS.stats)||[], archive, version:2 };
   const blob  = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
   const a     = document.createElement('a');
   a.href     = URL.createObjectURL(blob);
@@ -1293,6 +1320,7 @@ window.importData = function(e) {
       if (data.daily)     { daily      = data.daily;      save(KEYS.daily,     daily); }
       if (data.timetable) { timetable  = data.timetable;  save(KEYS.timetable, timetable); }
       if (data.subjects)  { subjectMap = data.subjects;   save(KEYS.subjects,  subjectMap); }
+      if (data.archive)   { archive    = data.archive;    save(KEYS.archive,   archive); }
       if (data.stats)     save(KEYS.stats, data.stats);
       renderPage(currentPage); renderToday();
       showToast('📥 インポートしました');
@@ -1305,7 +1333,7 @@ window.importData = function(e) {
 window.clearAllData = function() {
   if (!confirm('すべてのデータを削除します。この操作は取り消せません。')) return;
   Object.values(KEYS).forEach(k => localStorage.removeItem(k));
-  tasks = []; daily = []; timetable = {}; subjectMap = {};
+  tasks = []; daily = []; timetable = {}; subjectMap = {}; archive = [];
   renderToday(); renderPage(currentPage);
   showToast('🗑️ データを削除しました');
 };
@@ -1315,12 +1343,63 @@ function scheduleNotifications() {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   const todayStr = today();
   const todayEntries = daily.filter(d => d.date===todayStr && d.status!=='completed');
-  if (todayEntries.length > 0) {
-    new Notification('📚 StudyFlow', { body:`今日のタスクが ${todayEntries.length} 件あります。` });
+
+  // 時刻ベースの通知チェック
+  const now      = new Date();
+  const [hh, mm] = (settings.notifTime || '08:00').split(':').map(Number);
+  const target   = new Date(); target.setHours(hh, mm, 0, 0);
+  const diff     = target - now;
+
+  // まだ今日の通知時刻を過ぎていなければ予約
+  if (diff > 0 && diff < 86400000) {
+    setTimeout(() => {
+      if (Notification.permission === 'granted' && today() === todayStr) {
+        const pending = daily.filter(d => d.date===todayStr && d.status!=='completed');
+        if (pending.length > 0) {
+          new Notification('📚 StudyFlow おはようございます', {
+            body: `今日のタスクが ${pending.length} 件あります。頑張りましょう！`,
+            icon: './icon-192.png',
+          });
+        }
+      }
+    }, diff);
+  } else if (todayEntries.length > 0 && Math.abs(diff) < 300000) {
+    // 通知時刻から5分以内なら即送信
+    new Notification('📚 StudyFlow おはようございます', {
+      body: `今日のタスクが ${todayEntries.length} 件あります。`,
+    });
   }
-  tasks.filter(t => t.status!=='completed' && daysLeft(t.deadline)===1).forEach(t => {
-    new Notification('⚠️ StudyFlow — 締切間近！', { body:`「${t.title}」の締切は明日です。` });
-  });
+
+  // 締切前日通知
+  if (settings.notifDeadline) {
+    tasks.filter(t => t.status!=='completed' && daysLeft(t.deadline)===1).forEach(t => {
+      new Notification('⚠️ StudyFlow — 締切間近！', {
+        body: `「${t.title}」の締切は明日です。`,
+      });
+    });
+  }
+}
+
+// 通知を毎分チェックして時刻ベースで発火
+function startNotifScheduler() {
+  if (!settings.notif) return;
+  const check = () => {
+    if (!settings.notif || Notification.permission !== 'granted') return;
+    const now = new Date();
+    const [hh, mm] = (settings.notifTime || '08:00').split(':').map(Number);
+    if (now.getHours() === hh && now.getMinutes() === mm) {
+      const todayStr    = today();
+      const todayCount  = daily.filter(d => d.date===todayStr && d.status!=='completed').length;
+      const lastNotif   = sessionStorage.getItem('sf_last_notif');
+      if (todayCount > 0 && lastNotif !== todayStr) {
+        new Notification('📚 StudyFlow おはようございます', {
+          body: `今日のタスクが ${todayCount} 件あります。頑張りましょう！`,
+        });
+        sessionStorage.setItem('sf_last_notif', todayStr);
+      }
+    }
+  };
+  setInterval(check, 60000);
 }
 
 // ─── トースト ────────────────────────────────────────────────
@@ -1377,492 +1456,388 @@ window.dismissPWABanner = function() {
 };
 
 // ============================================================
-//  新機能: スワイプ操作
+//  ① クイック入力（自然言語パース）
 // ============================================================
-function initSwipe(card, dailyId) {
-  let startX = 0, startY = 0, isDragging = false;
-  const THRESHOLD = 80;
+let _quickParsed = null;
 
-  card.addEventListener('touchstart', e => {
-    startX = e.touches[0].clientX;
-    startY = e.touches[0].clientY;
-    isDragging = false;
-  }, { passive: true });
+// パースルール
+function parseQuickInput(text) {
+  const t = text.trim();
+  if (!t) return null;
 
-  card.addEventListener('touchmove', e => {
-    const dx = e.touches[0].clientX - startX;
-    const dy = e.touches[0].clientY - startY;
-    if (Math.abs(dy) > Math.abs(dx)) return; // 縦スクロール優先
-    isDragging = true;
-    const clamped = clamp(dx, -THRESHOLD * 1.2, THRESHOLD * 1.2);
-    card.style.transform = `translateX(${clamped}px)`;
-    card.style.transition = 'none';
-    // 色フィードバック
-    if (dx > 30)  card.style.background = 'rgba(34,197,94,.12)';
-    else if (dx < -30) card.style.background = 'rgba(239,68,68,.12)';
-    else card.style.background = '';
-  }, { passive: true });
+  // 科目候補（登録済み科目に一致するものを抽出）
+  const knownSubjects = [...new Set([
+    ...tasks.map(t => t.subject).filter(Boolean),
+    ...Object.keys(subjectMap),
+  ])];
+  let subject = '';
+  for (const s of knownSubjects) {
+    if (t.includes(s)) { subject = s; break; }
+  }
+  // 未登録でも「英語」「数学」「理科」「社会」「国語」「物理」「化学」「生物」「歴史」「地理」「英単語」等を検出
+  if (!subject) {
+    const m = t.match(/^(英語|英単語|数学|国語|理科|社会|物理|化学|生物|歴史|地理|情報|体育|音楽|美術|倫理|政経|現代文|古文|漢文)/);
+    if (m) subject = m[1];
+  }
 
-  card.addEventListener('touchend', e => {
-    const dx = e.changedTouches[0].clientX - startX;
-    card.style.transition = 'transform .25s ease, background .25s ease';
-    card.style.transform  = '';
-    card.style.background = '';
-    if (!isDragging) return;
-    if (dx > THRESHOLD) {
-      // 右スワイプ → 完了トグル
-      toggleDailyDoneAnim(dailyId, document.getElementById('check-' + dailyId) || card);
-    } else if (dx < -THRESHOLD) {
-      // 左スワイプ → 進捗入力
-      openProgressModal(dailyId);
+  // 数量（数字+単位）
+  const amountM = t.match(/(\d+)\s*(ページ|問|枚|個|回|行|字|単語|分|時間|項目|章|節|冊)/);
+  const totalAmount = amountM ? parseInt(amountM[1]) : 1;
+  const unit        = amountM ? amountM[2] : '';
+
+  // 締切（曜日・「明日」「今日」「今週末」「来週〇曜」）
+  let deadline = addDays(today(), 7); // デフォルト1週間後
+  const td = today();
+  if (/今日|本日/.test(t))   deadline = td;
+  else if (/明日/.test(t))   deadline = addDays(td, 1);
+  else if (/明後日/.test(t)) deadline = addDays(td, 2);
+  else if (/今週末|土曜/.test(t)) {
+    const dow = new Date(td+'T00:00:00').getDay();
+    deadline  = addDays(td, (6 - dow + 7) % 7 || 7);
+  } else if (/日曜/.test(t)) {
+    const dow = new Date(td+'T00:00:00').getDay();
+    deadline  = addDays(td, (0 - dow + 7) % 7 || 7);
+  } else {
+    // 「〇曜」→ 次のその曜日
+    const dowMatch = t.match(/(月|火|水|木|金|土|日)曜/);
+    if (dowMatch) {
+      const dowMap = {月:1,火:2,水:3,木:4,金:5,土:6,日:0};
+      const target = dowMap[dowMatch[1]];
+      const cur    = new Date(td+'T00:00:00').getDay();
+      const diff   = (target - cur + 7) % 7 || 7;
+      deadline     = addDays(td, diff);
     }
-  });
-}
-
-// ============================================================
-//  新機能: 週間目標バー
-// ============================================================
-function renderWeeklyGoalBar() {
-  const bar = $('weekly-goal-bar');
-  if (!bar) return;
-
-  const todayStr = today();
-  const weekStart = addDays(todayStr, -new Date(todayStr + 'T00:00:00').getDay());
-  const weekEnd   = addDays(weekStart, 6);
-
-  // 今週の勉強時間合計（分 → 時間）
-  const weekLogs = studyLog.filter(l => l.date >= weekStart && l.date <= weekEnd);
-  const totalMin = weekLogs.reduce((s, l) => s + (l.minutes || 0), 0);
-  const totalHrs = (totalMin / 60).toFixed(1);
-
-  // 今週完了タスク数
-  const weekDone = daily.filter(d => d.date >= weekStart && d.date <= weekEnd && d.status === 'completed').length;
-
-  // 今週のポモドーロ数
-  const weekPom = weekLogs.filter(l => l.isPom).length;
-
-  const target = goals.weeklyTarget || 0;
-  const unit   = goals.weeklyUnit   || '時間';
-  let current  = 0;
-  if (unit === '時間') current = parseFloat(totalHrs);
-  else if (unit === 'タスク完了') current = weekDone;
-  else if (unit === 'ポモドーロ') current = weekPom;
-
-  const pct = target > 0 ? clamp(Math.round(current / target * 100), 0, 100) : 0;
-
-  bar.innerHTML = target === 0
-    ? `<div class="wg-empty">
-        <span>週間目標が未設定です</span>
-        <button class="btn-secondary" style="padding:5px 12px;font-size:12px" onclick="openGoalModal()">設定する</button>
-       </div>`
-    : `<div class="wg-bar-wrap">
-        <div class="wg-bar-header">
-          <span class="wg-label">🎯 今週の目標: <b>${target} ${esc(unit)}</b></span>
-          <span class="wg-current">${current} / ${target} ${esc(unit)}</span>
-        </div>
-        <div class="wg-track">
-          <div class="wg-fill ${pct >= 100 ? 'complete' : ''}" style="width:${pct}%"></div>
-        </div>
-        <div class="wg-sub">
-          <span>🕐 ${totalHrs}時間 記録済み</span>
-          <span>✅ ${weekDone} タスク完了</span>
-          <span>🍅 ${weekPom} ポモドーロ</span>
-          <button class="btn-icon" onclick="openGoalModal()" title="目標変更" style="font-size:13px">✏️</button>
-        </div>
-       </div>`;
-}
-
-// ============================================================
-//  新機能: ポモドーロタイマー
-// ============================================================
-let _pomTimer  = null;
-let _pomSec    = 25 * 60;
-let _pomTotal  = 25 * 60;
-let _pomRunning= false;
-let _pomPhase  = '集中';
-let _pomTaskId = '';
-let _pomCount  = 0; // 今日完了したポモドーロ数
-
-function openPomModal() {
-  updatePomUI();
-  populatePomTaskSelect();
-  renderPomLog();
-  $('pom-modal').classList.remove('hidden');
-}
-window.openPomModal = openPomModal;
-
-function openPomForTask(taskId) {
-  openPomModal();
-  setTimeout(() => {
-    const sel = $('pom-task-select');
-    if (sel) { sel.value = taskId; onPomTaskSelect(); }
-  }, 50);
-}
-window.openPomForTask = openPomForTask;
-
-window.closePomModal = () => $('pom-modal').classList.add('hidden');
-window.closePomOnBg  = e  => { if (e.target.id === 'pom-modal') closePomModal(); };
-
-function populatePomTaskSelect() {
-  const sel = $('pom-task-select');
-  if (!sel) return;
-  const active = tasks.filter(t => t.status !== 'completed');
-  sel.innerHTML = '<option value="">なし（フリー集中）</option>' +
-    active.map(t => `<option value="${t.id}"${t.id===_pomTaskId?' selected':''}>${esc(t.title)}${t.subject ? ' — '+esc(t.subject) : ''}</option>`).join('');
-  updatePomTaskLabel();
-}
-
-window.onPomTaskSelect = function() {
-  _pomTaskId = $('pom-task-select')?.value ?? '';
-  updatePomTaskLabel();
-};
-
-function updatePomTaskLabel() {
-  const lbl  = $('pom-task-label');
-  if (!lbl) return;
-  if (_pomTaskId) {
-    const t = tasks.find(t => t.id === _pomTaskId);
-    lbl.textContent = t ? `📌 ${t.title}` : '';
-    lbl.style.color = t ? getSubjectColor(t.subject) : 'var(--sub)';
-  } else {
-    lbl.textContent = 'フリー集中モード';
-    lbl.style.color = 'var(--sub)';
-  }
-}
-
-window.setPomMode = function(min, phase, btn) {
-  if (_pomRunning) return;
-  document.querySelectorAll('.pom-mode-btn').forEach(b => b.classList.remove('active'));
-  if (btn) btn.classList.add('active');
-  _pomPhase = phase;
-  if (min === 0) {
-    $('pom-custom-row').classList.remove('hidden');
-    return;
-  }
-  $('pom-custom-row').classList.add('hidden');
-  _pomSec   = min * 60;
-  _pomTotal = min * 60;
-  updatePomUI();
-};
-
-window.applyCustomPom = function() {
-  const min = parseInt($('pom-custom-min')?.value) || 25;
-  _pomSec   = min * 60;
-  _pomTotal = min * 60;
-  $('pom-custom-row').classList.add('hidden');
-  updatePomUI();
-};
-
-window.togglePom = function() {
-  if (_pomRunning) {
-    clearInterval(_pomTimer); _pomRunning = false;
-    $('pom-start-btn').textContent = '▶ スタート';
-    $('pom-float').classList.add('hidden');
-  } else {
-    _pomRunning = true;
-    $('pom-start-btn').textContent = '⏸ 一時停止';
-    $('pom-float').classList.remove('hidden');
-    _pomTimer = setInterval(() => {
-      _pomSec--;
-      updatePomUI();
-      if (_pomSec <= 0) {
-        clearInterval(_pomTimer); _pomRunning = false;
-        onPomComplete();
-      }
-    }, 1000);
-  }
-};
-
-window.resetPom = function() {
-  clearInterval(_pomTimer); _pomRunning = false;
-  $('pom-start-btn').textContent = '▶ スタート';
-  $('pom-float').classList.add('hidden');
-  const btn = document.querySelector('.pom-mode-btn.active');
-  const min = btn ? parseInt(btn.dataset.min) || 25 : 25;
-  _pomSec   = min * 60;
-  _pomTotal = min * 60;
-  updatePomUI();
-};
-
-function onPomComplete() {
-  const min = Math.round(_pomTotal / 60);
-  _pomCount++;
-  $('pom-start-btn').textContent = '▶ スタート';
-  $('pom-float').classList.add('hidden');
-
-  // 通知
-  if (settings.notif && Notification.permission === 'granted') {
-    new Notification('🍅 ポモドーロ完了！', {
-      body: _pomTaskId
-        ? `「${tasks.find(t=>t.id===_pomTaskId)?.title ?? ''}」 ${min}分お疲れ様！`
-        : `${min}分の集中、お疲れ様でした！`,
-    });
+    // 「〇日後」「〇週間後」
+    const daysM = t.match(/(\d+)\s*日後/);
+    if (daysM) deadline = addDays(td, parseInt(daysM[1]));
+    const weeksM = t.match(/(\d+)\s*週間?後/);
+    if (weeksM) deadline = addDays(td, parseInt(weeksM[1]) * 7);
+    // 「〇月〇日」
+    const dateM = t.match(/(\d{1,2})月(\d{1,2})日/);
+    if (dateM) {
+      const y = new Date().getFullYear();
+      deadline = `${y}-${m2(dateM[1])}-${m2(dateM[2])}`;
+    }
   }
 
-  // 勉強ログに自動記録
-  studyLog.push({
-    id: uid(), date: today(), taskId: _pomTaskId,
-    minutes: min, note: `ポモドーロ (${_pomPhase})`, isPom: true,
-  });
-  saveStudyLog();
-  renderPomLog();
-  renderWeeklyGoalBar();
-  showToast(`🍅 ${min}分完了！お疲れ様でした`);
+  // 優先度
+  let priority = 'medium';
+  if (/高|重要|急ぎ|urgent|!{2,}/.test(t)) priority = 'high';
+  else if (/低|余裕|いつでも/.test(t))      priority = 'low';
 
-  // サウンド（Web Audio API で短いビープ）
-  try {
-    const ctx = new AudioContext();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain); gain.connect(ctx.destination);
-    osc.frequency.value = 660; gain.gain.value = 0.3;
-    osc.start(); gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.8);
-    osc.stop(ctx.currentTime + 0.8);
-  } catch {}
+  // タイトル（科目・数量・締切・優先度キーワードを除いた残り）
+  let title = t
+    .replace(/(今日|明日|明後日|今週末|来週|今週|[月火水木金土日]曜日?|(\d+)日後|(\d+)週間?後|\d{1,2}月\d{1,2}日)/g, '')
+    .replace(/(\d+)\s*(ページ|問|枚|個|回|行|字|単語|分|時間|項目|章|節|冊)/g, '')
+    .replace(/(高|低|重要|急ぎ|余裕|いつでも)$/, '')
+    .replace(/\s+/g, ' ').trim();
+  if (!title) title = subject || 'タスク';
+
+  return { title, subject, totalAmount, unit, deadline, priority };
 }
 
-function updatePomUI() {
-  const min = Math.floor(_pomSec / 60);
-  const sec = _pomSec % 60;
-  const timeStr = `${m2(min)}:${m2(sec)}`;
-  if ($('pom-time')) $('pom-time').textContent = timeStr;
-  if ($('pom-phase')) $('pom-phase').textContent = _pomPhase;
-  if ($('pom-float-time')) $('pom-float-time').textContent = timeStr;
-  if ($('pom-float-label')) $('pom-float-label').textContent = _pomPhase;
+window.onQuickInputKey = function(e) {
+  if (e.key === 'Enter') { e.preventDefault(); submitQuickInput(); }
+  else updateQuickPreview();
+};
 
-  // リング
-  const fill = $('pom-ring-fill');
-  if (fill) {
-    const circ = 326.7;
-    const ratio = _pomTotal > 0 ? _pomSec / _pomTotal : 1;
-    fill.style.strokeDashoffset = circ * (1 - ratio);
-  }
-}
+function updateQuickPreview() {
+  const val     = $('quick-input')?.value ?? '';
+  const preview = $('quick-preview');
+  if (!preview) return;
+  if (!val.trim()) { preview.classList.add('hidden'); return; }
 
-function renderPomLog() {
-  const wrap = $('pom-log-wrap');
-  if (!wrap) return;
-  const todayLogs = studyLog.filter(l => l.date === today() && l.isPom);
-  if (todayLogs.length === 0) { wrap.innerHTML = ''; return; }
-  wrap.innerHTML = `
-    <div class="pom-log-title">今日の記録 🍅×${todayLogs.length}</div>
-    <div class="pom-log-list">
-      ${todayLogs.map(l => {
-        const t = tasks.find(t => t.id === l.taskId);
-        return `<div class="pom-log-item">
-          <span>${l.minutes}分</span>
-          <span style="color:var(--sub)">${t ? esc(t.title) : 'フリー'}</span>
-        </div>`;
-      }).join('')}
+  const parsed = parseQuickInput(val);
+  if (!parsed) { preview.classList.add('hidden'); return; }
+
+  const color = getSubjectColor(parsed.subject);
+  preview.classList.remove('hidden');
+  preview.innerHTML = `
+    <div class="qp-row">
+      <span class="qp-title">${esc(parsed.title)}</span>
+      ${parsed.subject ? `<span class="tag" style="background:${color}22;color:${color}">${esc(parsed.subject)}</span>` : ''}
+      <span class="tag priority-${parsed.priority}">${priorityLabel(parsed.priority)}</span>
+      ${parsed.totalAmount > 1 ? `<span class="tag">${parsed.totalAmount}${esc(parsed.unit)}</span>` : ''}
+      <span class="tag">締切 ${fmtDate(parsed.deadline)}</span>
+      <span class="qp-hint">↵ で追加 / 確認してから追加</span>
     </div>`;
 }
 
-// ============================================================
-//  新機能: 勉強ログ
-// ============================================================
-window.openLogModal = function() {
-  const sel = $('log-task-select');
-  if (sel) {
-    const subjects = [...new Set([
-      ...tasks.map(t => t.subject).filter(Boolean),
-      ...Object.keys(subjectMap),
-    ])];
-    sel.innerHTML = '<option value="">— 科目/タスクを選択 —</option>' +
-      tasks.filter(t => t.status !== 'completed').map(t =>
-        `<option value="${t.id}">${esc(t.title)}${t.subject ? ' — '+esc(t.subject) : ''}</option>`
-      ).join('') +
-      subjects.map(s => `<option value="subj:${esc(s)}">📚 ${esc(s)} (科目)</option>`).join('');
+window.submitQuickInput = function() {
+  const val = $('quick-input')?.value.trim() ?? '';
+  if (!val) return;
+  const parsed = parseQuickInput(val);
+  if (!parsed) return;
+  _quickParsed = parsed;
+
+  // 確認モーダルを表示
+  const color = getSubjectColor(parsed.subject);
+  const body  = $('quick-confirm-body');
+  if (body) {
+    body.innerHTML = `
+      <div class="qc-preview">
+        <div class="qc-row"><span class="qc-lbl">タイトル</span><span class="qc-val">${esc(parsed.title)}</span></div>
+        ${parsed.subject ? `<div class="qc-row"><span class="qc-lbl">科目</span><span class="qc-val" style="color:${color}">${esc(parsed.subject)}</span></div>` : ''}
+        <div class="qc-row"><span class="qc-lbl">優先度</span><span class="qc-val">${priorityLabel(parsed.priority)}</span></div>
+        <div class="qc-row"><span class="qc-lbl">量</span><span class="qc-val">${parsed.totalAmount} ${esc(parsed.unit)}</span></div>
+        <div class="qc-row"><span class="qc-lbl">締切</span><span class="qc-val">${parsed.deadline}</span></div>
+      </div>`;
   }
-  if ($('log-date')) $('log-date').value = today();
-  renderLogHistory();
-  $('log-modal').classList.remove('hidden');
+  $('quick-confirm-modal').classList.remove('hidden');
 };
-window.closeLogModal = () => $('log-modal').classList.add('hidden');
-window.closeLogOnBg  = e  => { if (e.target.id === 'log-modal') closeLogModal(); };
 
-window.saveLog = function() {
-  const taskSel = $('log-task-select')?.value ?? '';
-  const minutes = parseInt($('log-minutes')?.value) || 0;
-  const date    = $('log-date')?.value || today();
-  const note    = $('log-note')?.value.trim() || '';
+window.confirmQuickAdd = function() {
+  if (!_quickParsed) return;
+  addTask(_quickParsed);
+  closeQuickConfirm();
+  if ($('quick-input')) $('quick-input').value = '';
+  if ($('quick-preview')) $('quick-preview').classList.add('hidden');
+  renderToday(); renderPage(currentPage);
+  showToast('⚡ タスクを追加しました');
+};
 
-  if (minutes <= 0) { shakeInput('log-minutes'); return; }
+window.editQuickTask = function() {
+  if (!_quickParsed) return;
+  closeQuickConfirm();
+  openAddTask();
+  // フォームに解析結果を流し込む
+  setTimeout(() => {
+    if ($('f-title'))    $('f-title').value    = _quickParsed.title;
+    if ($('f-subject'))  $('f-subject').value  = _quickParsed.subject;
+    if ($('f-priority')) $('f-priority').value = _quickParsed.priority;
+    if ($('f-total'))    $('f-total').value    = _quickParsed.totalAmount;
+    if ($('f-unit'))     $('f-unit').value     = _quickParsed.unit;
+    if ($('f-deadline')) $('f-deadline').value = _quickParsed.deadline;
+    onSubjectInput?.();
+    updateSplitPreview?.();
+  }, 60);
+  if ($('quick-input')) $('quick-input').value = '';
+};
 
-  studyLog.push({
-    id: uid(), date, taskId: taskSel.startsWith('subj:') ? '' : taskSel,
-    subject: taskSel.startsWith('subj:') ? taskSel.slice(5) : '',
-    minutes, note, isPom: false,
+window.closeQuickConfirm  = () => $('quick-confirm-modal')?.classList.add('hidden');
+window.closeQuickConfirmOnBg = e => { if (e.target.id==='quick-confirm-modal') closeQuickConfirm(); };
+
+// クイック入力のリアルタイムプレビュー
+$('quick-input')?.addEventListener('input', updateQuickPreview);
+
+// ============================================================
+//  ② アーカイブ機能
+// ============================================================
+
+// 完了タスクを自動アーカイブ（完了から7日以上経過）
+function autoArchiveOldTasks() {
+  const cutoff  = addDays(today(), -7);
+  const toMove  = tasks.filter(t =>
+    t.status === 'completed' && t.updatedAt && t.updatedAt.slice(0,10) <= cutoff
+  );
+  if (toMove.length === 0) return;
+
+  toMove.forEach(t => archive.unshift({ ...t, archivedAt: new Date().toISOString() }));
+  tasks   = tasks.filter(t => !toMove.find(m => m.id === t.id));
+  daily   = daily.filter(d => !toMove.find(m => m.id === d.taskId));
+  saveTasks(); saveDaily(); saveArchive();
+}
+
+function updateArchiveCount() {
+  const el = $('archive-count');
+  if (el) el.textContent = archive.length > 0 ? archive.length : '';
+}
+
+let _taskTab = 'active';
+
+window.switchTaskTab = function(tab, btn) {
+  _taskTab = tab;
+  document.querySelectorAll('.task-tab').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  $('task-active-section')?.classList.toggle('hidden', tab !== 'active');
+  $('task-archived-section')?.classList.toggle('hidden', tab !== 'archived');
+  if (tab === 'active')   renderTaskList();
+  if (tab === 'archived') renderArchivedList();
+};
+
+function renderArchivedList() {
+  const container = $('archived-task-list');
+  if (!container) return;
+  if (archive.length === 0) {
+    container.innerHTML = `<div class="empty-state"><div class="empty-icon">🗄️</div><p>アーカイブにタスクはありません<br><span style="font-size:12px;color:var(--sub)">完了後7日で自動保管されます</span></p></div>`;
+    return;
+  }
+  container.innerHTML = '';
+  archive.forEach(t => {
+    const color = getSubjectColor(t.subject);
+    const card  = document.createElement('div');
+    card.className = 'task-card completed';
+    card.style.borderLeftColor = color;
+    card.innerHTML = `
+      <div class="task-card-top">
+        <div class="task-check" style="background:var(--green);border-color:var(--green);color:#fff;display:flex;align-items:center;justify-content:center;border-radius:50%;width:22px;height:22px;font-size:12px">✓</div>
+        <div class="task-info">
+          <div class="task-title" style="text-decoration:line-through">${esc(t.title)}</div>
+          <div class="task-meta" style="margin-top:4px">
+            ${t.subject ? `<span class="tag" style="background:${color}22;color:${color}">${esc(t.subject)}</span>` : ''}
+            <span class="tag">${t.completedAmount}/${t.totalAmount} ${esc(t.unit)}</span>
+            <span class="tag" style="color:var(--sub)">${t.archivedAt?.slice(0,10) ?? ''} 保管</span>
+          </div>
+        </div>
+        <div class="task-actions">
+          <button class="btn-icon" onclick="restoreFromArchive('${t.id}')" title="復元">♻️</button>
+          <button class="btn-icon" onclick="deleteFromArchive('${t.id}')" title="完全削除">🗑️</button>
+        </div>
+      </div>`;
+    container.appendChild(card);
   });
-  saveStudyLog();
-  renderLogHistory();
-  renderWeeklyGoalBar();
-  if ($('log-minutes')) $('log-minutes').value = '';
-  if ($('log-note'))    $('log-note').value    = '';
-  showToast('📖 勉強ログを記録しました');
+}
+
+window.restoreFromArchive = function(id) {
+  const t = archive.find(a => a.id === id);
+  if (!t) return;
+  const { archivedAt, ...taskData } = t;
+  taskData.status = 'active';
+  taskData.completedAmount = 0;
+  taskData.updatedAt = new Date().toISOString();
+  tasks.push(taskData);
+  archive = archive.filter(a => a.id !== id);
+  saveTasks(); saveArchive();
+  generateDailyTasks(taskData);
+  renderArchivedList(); updateArchiveCount();
+  showToast('♻️ タスクを復元しました');
 };
 
-function renderLogHistory() {
-  const wrap = $('log-history');
+window.deleteFromArchive = function(id) {
+  if (!confirm('完全に削除しますか？この操作は取り消せません。')) return;
+  archive = archive.filter(a => a.id !== id);
+  saveArchive(); renderArchivedList(); updateArchiveCount();
+  showToast('🗑️ 完全削除しました');
+};
+
+window.clearArchive = function() {
+  if (!confirm(`アーカイブの ${archive.length} 件をすべて完全削除しますか？`)) return;
+  archive = []; saveArchive(); renderArchivedList(); updateArchiveCount();
+  showToast('🗑️ アーカイブを削除しました');
+};
+
+// タスク完了時にアーカイブではなく即完了にする（7日待つ版に変更済みなので既存の toggleTaskComplete はそのまま）
+// 手動アーカイブボタンも追加
+window.manualArchive = function(id) {
+  const t = tasks.find(t => t.id === id);
+  if (!t) return;
+  archive.unshift({ ...t, archivedAt: new Date().toISOString() });
+  tasks = tasks.filter(t => t.id !== id);
+  daily = daily.filter(d => d.taskId !== id);
+  saveTasks(); saveDaily(); saveArchive();
+  renderPage(currentPage); updateArchiveCount();
+  showToast('🗄️ アーカイブしました');
+};
+
+// ============================================================
+//  ③ 集中モード
+// ============================================================
+let _focusIdx = 0;
+let _focusEntries = [];
+
+window.openFocusMode = function() {
+  const todayStr = today();
+  _focusEntries  = daily.filter(d => d.date === todayStr && d.status !== 'completed');
+  if (_focusEntries.length === 0) {
+    showToast('🎉 今日のタスクはすべて完了しています！'); return;
+  }
+  _focusIdx = 0;
+  renderFocusCard();
+  $('focus-overlay')?.classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+};
+
+window.closeFocusMode = function() {
+  $('focus-overlay')?.classList.add('hidden');
+  document.body.style.overflow = '';
+};
+
+window.focusNav = function(dir) {
+  _focusIdx = clamp(_focusIdx + dir, 0, _focusEntries.length - 1);
+  renderFocusCard();
+};
+
+function renderFocusCard() {
+  const wrap    = $('focus-task-wrap');
+  const counter = $('focus-counter');
+  const prevBtn = $('focus-prev');
+  const nextBtn = $('focus-next');
+  const progRow = $('focus-progress-row');
   if (!wrap) return;
-  const recent = [...studyLog].sort((a,b) => b.date.localeCompare(a.date)).slice(0, 10);
-  if (recent.length === 0) { wrap.innerHTML = ''; return; }
 
-  const grouped = {};
-  recent.forEach(l => {
-    if (!grouped[l.date]) grouped[l.date] = [];
-    grouped[l.date].push(l);
-  });
+  const entry = _focusEntries[_focusIdx];
+  if (!entry) return;
+  const task  = tasks.find(t => t.id === entry.taskId);
+  if (!task)  return;
+
+  const color  = getSubjectColor(task.subject);
+  const p2     = entry.plannedAmount > 0
+    ? clamp(Math.round(entry.completedAmount / entry.plannedAmount * 100), 0, 100) : 0;
+  const dl     = daysLeft(task.deadline);
+
+  if (counter) counter.textContent = `${_focusIdx + 1} / ${_focusEntries.length}`;
+  if (prevBtn) prevBtn.disabled = _focusIdx === 0;
+  if (nextBtn) nextBtn.disabled = _focusIdx === _focusEntries.length - 1;
+
+  // 期間ラベルバッジ
+  const todayStr    = today();
 
   wrap.innerHTML = `
-    <div class="log-hist-title">最近の記録</div>
-    ${Object.entries(grouped).map(([date, logs]) => `
-      <div class="log-date-group">
-        <div class="log-date-label">${date === today() ? '今日' : fmtDate(date)}</div>
-        ${logs.map(l => {
-          const task = l.taskId ? tasks.find(t => t.id === l.taskId) : null;
-          const label = task ? esc(task.title) : (l.subject ? esc(l.subject) : 'フリー');
-          return `<div class="log-item">
-            <span class="log-min">${l.minutes}分</span>
-            <span class="log-label">${label}</span>
-            ${l.note ? `<span class="log-note-txt">${esc(l.note)}</span>` : ''}
-            <button class="log-del" onclick="deleteLog('${l.id}')">✕</button>
-          </div>`;
-        }).join('')}
-      </div>`).join('')}`;
-}
-
-window.deleteLog = function(id) {
-  studyLog = studyLog.filter(l => l.id !== id);
-  saveStudyLog(); renderLogHistory(); renderWeeklyGoalBar();
-};
-
-// ============================================================
-//  新機能: 週間目標
-// ============================================================
-window.openGoalModal = function() {
-  if ($('goal-target')) $('goal-target').value  = goals.weeklyTarget || '';
-  if ($('goal-unit'))   $('goal-unit').value    = goals.weeklyUnit   || '時間';
-  updateGoalPreview();
-  $('goal-modal').classList.remove('hidden');
-};
-window.closeGoalModal = () => $('goal-modal').classList.add('hidden');
-window.closeGoalOnBg  = e  => { if (e.target.id === 'goal-modal') closeGoalModal(); };
-
-window.saveGoal = function() {
-  goals.weeklyTarget = parseInt($('goal-target')?.value) || 0;
-  goals.weeklyUnit   = $('goal-unit')?.value || '時間';
-  saveGoals(); closeGoalModal(); renderWeeklyGoalBar();
-  showToast('🎯 週間目標を設定しました');
-};
-
-function updateGoalPreview() {
-  const prev = $('goal-preview');
-  if (!prev) return;
-  const target = parseInt($('goal-target')?.value) || 0;
-  const unit   = $('goal-unit')?.value || '時間';
-  if (target === 0) { prev.innerHTML = ''; return; }
-  prev.innerHTML = `<div class="goal-prev-text">「今週は <b>${target} ${esc(unit)}</b> 頑張る！」</div>`;
-}
-
-['goal-target','goal-unit'].forEach(id => {
-  const el = $(id);
-  if (el) el.addEventListener('input', updateGoalPreview);
-});
-
-// ============================================================
-//  新機能: タスク詳細モーダル
-// ============================================================
-window.openDetailModal = function(taskId) {
-  const task = tasks.find(t => t.id === taskId);
-  if (!task) return;
-
-  $('detail-modal-title').textContent = task.title;
-
-  const color     = getSubjectColor(task.subject);
-  const dl        = daysLeft(task.deadline);
-  const pct       = task.totalAmount > 0 ? clamp(Math.round(task.completedAmount/task.totalAmount*100),0,100) : 0;
-  const taskDly   = daily.filter(d => d.taskId === taskId).sort((a,b) => a.date.localeCompare(b.date));
-  const taskLogs  = studyLog.filter(l => l.taskId === taskId);
-  const totalLogMin = taskLogs.reduce((s,l) => s + l.minutes, 0);
-
-  const histRows = taskDly.slice(-7).map(d => `
-    <div class="detail-hist-row">
-      <span class="detail-hist-date">${fmtDate(d.date)}</span>
-      <div class="detail-hist-bar-wrap">
-        <div class="detail-hist-bar" style="width:${d.plannedAmount>0?clamp(Math.round(d.completedAmount/d.plannedAmount*100),0,100):0}%;background:${color}"></div>
+    <div class="focus-card" style="border-top: 4px solid ${color}">
+      <div class="focus-subject" style="color:${color}">${esc(task.subject || '　')}</div>
+      <div class="focus-title">${esc(task.title)}</div>
+      <div class="focus-meta">
+        <span class="tag priority-${task.priority}">${priorityLabel(task.priority)}</span>
+        ${task.deadline ? `<span class="tag${dl!==null&&dl<=1?' deadline-near':''}">締切 ${fmtDate(task.deadline)}（あと${dl??'?'}日）</span>` : ''}
       </div>
-      <span class="detail-hist-amt${d.status==='completed'?' done':''}">${d.completedAmount}/${d.plannedAmount}</span>
-    </div>`).join('');
-
-  $('detail-modal-body').innerHTML = `
-    <div class="detail-tags">
-      ${task.subject ? `<span class="tag" style="background:${color}22;color:${color}">${esc(task.subject)}</span>` : ''}
-      <span class="tag priority-${task.priority}">${priorityLabel(task.priority)}</span>
-      ${task.deadline ? `<span class="tag${dl!==null&&dl<=3?' deadline-near':''}">締切 ${fmtDate(task.deadline)}（あと${dl ?? '?'}日）</span>` : ''}
-      ${task.repeat !== 'none' ? `<span class="tag">🔁 ${repeatLabel(task.repeat, task.repeatDays)}</span>` : ''}
-    </div>
-
-    <div class="detail-progress-wrap">
-      <div class="progress-numbers">
-        <span>総進捗: ${task.completedAmount} / ${task.totalAmount} ${esc(task.unit)}</span>
-        <span>${pct}%</span>
+      ${task.memo ? `<div class="focus-memo">${esc(task.memo)}</div>` : ''}
+      <div class="focus-progress-nums">
+        <span>${entry.completedAmount} / ${entry.plannedAmount} ${esc(task.unit)}</span>
+        <span style="font-size:28px;font-weight:800;color:${color}">${p2}%</span>
       </div>
-      <div class="progress-bar-wrap" style="height:10px">
-        <div class="progress-bar" style="width:${pct}%;background:linear-gradient(90deg,${color},${color}bb)"></div>
+      <div class="focus-bar-wrap">
+        <div class="focus-bar" style="width:${p2}%;background:${color}"></div>
       </div>
-    </div>
+      <div class="focus-actions">
+        <button class="btn-primary" style="flex:2" onclick="focusOpenProgress('${entry.id}')">進捗を入力</button>
+        <button class="btn-secondary" onclick="focusComplete('${entry.id}')">✓ 完了</button>
+      </div>
+    </div>`;
 
-    ${task.memo ? `<div class="detail-memo"><strong>📝 メモ</strong><p>${esc(task.memo)}</p></div>` : ''}
-
-    <div class="detail-stats-row">
-      <div class="detail-stat"><div class="detail-stat-val">${totalLogMin}</div><div class="detail-stat-lbl">記録分数</div></div>
-      <div class="detail-stat"><div class="detail-stat-val">${taskLogs.filter(l=>l.isPom).length}</div><div class="detail-stat-lbl">ポモドーロ</div></div>
-      <div class="detail-stat"><div class="detail-stat-val">${taskDly.filter(d=>d.status==='completed').length}</div><div class="detail-stat-lbl">完了日数</div></div>
-    </div>
-
-    ${taskDly.length > 0 ? `
-    <div class="detail-hist-title">直近7日の記録</div>
-    <div class="detail-hist">${histRows}</div>` : ''}
-  `;
-
-  const editBtn = $('detail-edit-btn');
-  if (editBtn) {
-    editBtn.onclick = () => { closeDetailModal(); openEditTask(taskId); };
+  // 全タスクのミニ進捗バー
+  if (progRow) {
+    progRow.innerHTML = _focusEntries.map((e, i) => {
+      const t2  = tasks.find(t => t.id === e.taskId);
+      const c2  = getSubjectColor(t2?.subject);
+      const p   = e.plannedAmount > 0 ? clamp(Math.round(e.completedAmount/e.plannedAmount*100),0,100) : 0;
+      return `<div class="focus-mini-task${i===_focusIdx?' active':''}" onclick="focusJump(${i})" title="${esc(t2?.title??'')}">
+        <div class="focus-mini-bar" style="background:${c2};opacity:${i===_focusIdx?1:.4};width:${Math.max(p,8)}%"></div>
+      </div>`;
+    }).join('');
   }
+}
 
-  $('detail-modal').classList.remove('hidden');
+window.focusJump = function(idx) {
+  _focusIdx = idx; renderFocusCard();
 };
 
-window.closeDetailModal = () => $('detail-modal').classList.add('hidden');
-window.closeDetailOnBg  = e  => { if (e.target.id === 'detail-modal') closeDetailModal(); };
+window.focusOpenProgress = function(dailyId) {
+  closeFocusMode();
+  openProgressModal(dailyId);
+};
 
-function renderStudyLogStats() {
-  // 既存のstats-gridの下に勉強時間を追加
-  const todayStr  = today();
-  const weekStart = addDays(todayStr, -6);
-  const monthStart = (() => { const d = new Date(todayStr); d.setDate(1); return d.toISOString().slice(0,10); })();
-
-  let logs;
-  if (statPeriod === 'today')   logs = studyLog.filter(l => l.date === todayStr);
-  else if (statPeriod === 'week')  logs = studyLog.filter(l => l.date >= weekStart);
-  else                          logs = studyLog.filter(l => l.date >= monthStart);
-
-  const totalMin = logs.reduce((s, l) => s + l.minutes, 0);
-  const pomCount = logs.filter(l => l.isPom).length;
-  if (totalMin === 0 && pomCount === 0) return;
-
-  // stats-gridに追加カードを差し込む
-  const grid = $('stats-grid');
-  if (!grid) return;
-  const extra = document.createElement('div');
-  extra.className = 'stat-card';
-  extra.innerHTML = `<div class="stat-value" style="color:var(--yellow)">${Math.round(totalMin/60*10)/10}</div><div class="stat-label">記録時間(h)</div>`;
-  grid.appendChild(extra);
-  const extra2 = document.createElement('div');
-  extra2.className = 'stat-card';
-  extra2.innerHTML = `<div class="stat-value" style="color:var(--red)">🍅${pomCount}</div><div class="stat-label">ポモドーロ</div>`;
-  grid.appendChild(extra2);
-}
+window.focusComplete = function(dailyId) {
+  toggleDailyDone(dailyId);
+  // 完了した項目を除外して次へ
+  _focusEntries = _focusEntries.filter(e => e.id !== dailyId);
+  if (_focusEntries.length === 0) {
+    closeFocusMode();
+    showToast('🎉 すべて完了しました！素晴らしい！');
+    return;
+  }
+  _focusIdx = clamp(_focusIdx, 0, _focusEntries.length - 1);
+  renderFocusCard();
+};
 
 // ─── 初期化 ──────────────────────────────────────────────────
 function init() {
@@ -1883,6 +1858,10 @@ function init() {
   saveDaily();
 
   if (settings.notif) scheduleNotifications();
+  startNotifScheduler();
+
+  // 期限切れ完了タスクを自動アーカイブ（30日以上前）
+  autoArchiveOldTasks();
 
   updateSubjectDatalist();
   renderToday();
