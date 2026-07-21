@@ -798,3 +798,65 @@ kbd {
   height: 100%; border-radius: 4px; transition: width .3s ease;
   min-width: 4px;
 }
+
+/* ============================================================
+   ドラッグ＆ドロップ / 開始日 追加スタイル
+   ============================================================ */
+
+/* ドロップゾーン アクティブ状態 */
+.cal-drop-zone {
+  transition: background .15s, box-shadow .15s;
+  border-radius: 8px;
+  min-height: 32px;
+}
+.cal-drop-zone.cal-drop-active {
+  background: rgba(56, 189, 248, .12);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* ドラッグ可能ピル */
+.cal-task-pill[draggable="true"] {
+  cursor: grab;
+  user-select: none;
+  transition: opacity .15s, transform .15s, box-shadow .15s;
+}
+.cal-task-pill[draggable="true"]:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 3px 12px rgba(0,0,0,.25);
+}
+.cal-task-pill[draggable="true"]:active { cursor: grabbing; }
+
+/* ドラッグハンドルアイコン */
+.cal-drag-handle {
+  font-size: 14px;
+  color: var(--sub);
+  opacity: .5;
+  cursor: grab;
+  flex-shrink: 0;
+}
+.cal-task-pill:hover .cal-drag-handle { opacity: 1; }
+
+/* 日ビュー: 前後の日へのドロップナビゲーション */
+.cal-day-nav-drop {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px dashed var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sub);
+  text-align: center;
+  cursor: default;
+  transition: all .15s;
+}
+.cal-day-nav-drop.cal-drop-active {
+  background: rgba(56, 189, 248, .12);
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* タスクフォーム: 開始日〜締切 2列 */
+.field-row .field-group:first-child input[type="date"]::before {
+  /* ブラウザネイティブのdateピッカーそのまま使用 */
+}

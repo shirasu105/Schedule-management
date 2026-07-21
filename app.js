@@ -158,6 +158,7 @@ function addTask(data) {
     totalAmount:     Number(data.totalAmount),
     completedAmount: 0,
     unit:            data.unit || '',
+    startDate:       data.startDate || today(),
     deadline:        data.deadline || addDays(today(), 365),
     priority:        data.priority || 'medium',
     memo:            data.memo || '',
@@ -230,12 +231,14 @@ function isRepeatDay(task, dateStr) {
 // ─── 自動分割 ────────────────────────────────────────────────
 function generateDailyTasks(task) {
   if (task.status === 'completed') return;
-  const todayStr = today();
+  const todayStr  = today();
+  // 開始日（過去なら今日から、未来なら開始日から）
+  const startStr  = task.startDate && task.startDate > todayStr ? task.startDate : todayStr;
 
-  // 繰り返しタスク：今日〜終了日まで展開
+  // 繰り返しタスク：開始日〜終了日まで展開
   if (task.repeat && task.repeat !== 'none') {
-    const end = task.repeatEnd || addDays(todayStr, 60);
-    let d = todayStr;
+    const end = task.repeatEnd || addDays(startStr, 60);
+    let d = startStr;
     while (d <= end) {
       if (isRepeatDay(task, d) && !daily.some(e => e.taskId===task.id && e.date===d)) {
         daily.push({ id:uid(), taskId:task.id, date:d,
@@ -247,15 +250,18 @@ function generateDailyTasks(task) {
     return;
   }
 
-  // 通常タスク：均等分割
+  // 通常タスク：開始日〜締切まで均等分割
   const deadline  = task.deadline;
   const remaining = task.totalAmount - task.completedAmount;
   if (remaining <= 0) return;
-  const days  = Math.max(1, daysLeft(deadline) ?? 1);
-  const base  = Math.floor(remaining / days);
-  const extra = remaining % days;
-  for (let i = 0; i < days; i++) {
-    const date = addDays(todayStr, i);
+  // 開始日から締切までの日数
+  const spanDays = Math.max(1,
+    Math.ceil((new Date(deadline+'T00:00:00') - new Date(startStr+'T00:00:00')) / 86400000) + 1
+  );
+  const base  = Math.floor(remaining / spanDays);
+  const extra = remaining % spanDays;
+  for (let i = 0; i < spanDays; i++) {
+    const date = addDays(startStr, i);
     if (date > deadline) break;
     if (daily.some(d => d.taskId===task.id && d.date===date)) continue;
     daily.push({ id:uid(), taskId:task.id, date,
@@ -292,6 +298,7 @@ function redistributeTask(taskId) {
       plannedAmount:base+(i<extra?1:0), completedAmount:0, status:'pending' });
   }
   saveDaily();
+  // 開始日が未来の場合、再分配後もstartDateを更新しない（そのまま保持）
 }
 
 // ─── 統計記録 ────────────────────────────────────────────────
@@ -601,6 +608,8 @@ window.renderTaskList = function() {
       ? `<span class="tag">🔁 ${repeatLabel(t.repeat, t.repeatDays)}</span>` : '';
     const dlBadge = t.deadline
       ? `<span class="tag${dl!==null&&dl<=3&&t.status!=='completed'?' deadline-near':''}">締切 ${fmtDate(t.deadline)}</span>` : '';
+    const startBadge = t.startDate && t.startDate > today()
+      ? `<span class="tag" style="color:var(--accent)">開始 ${fmtDate(t.startDate)}</span>` : '';
 
     card.innerHTML = `
       <div class="task-card-top">
@@ -613,6 +622,7 @@ window.renderTaskList = function() {
           <div class="task-meta">
             ${t.subject ? `<span class="tag" style="background:${color}22;color:${color}">${esc(t.subject)}</span>` : ''}
             <span class="tag priority-${t.priority}">${priorityLabel(t.priority)}</span>
+            ${startBadge}
             ${dlBadge}
             <span class="tag">${t.completedAmount}/${t.totalAmount} ${esc(t.unit)}</span>
             ${repeatBadge}
@@ -673,6 +683,7 @@ window.openAddTask = function() {
   $('modal-title').textContent = 'タスクを追加';
   $('edit-task-id').value = '';
   clearTaskForm();
+  $('f-startdate').value = today();
   const d = new Date(); d.setDate(d.getDate() + 7);
   $('f-deadline').value = d.toISOString().slice(0,10);
   const endD = new Date(); endD.setMonth(endD.getMonth() + 1);
@@ -688,14 +699,15 @@ window.openEditTask = function(id) {
   if (!t) return;
   $('modal-title').textContent = 'タスクを編集';
   $('edit-task-id').value = id;
-  $('f-title').value    = t.title;
-  $('f-subject').value  = t.subject;
-  $('f-priority').value = t.priority;
-  $('f-total').value    = t.totalAmount;
-  $('f-unit').value     = t.unit;
-  $('f-deadline').value = t.deadline;
-  $('f-memo').value     = t.memo;
-  $('f-repeat').value   = t.repeat || 'none';
+  $('f-title').value      = t.title;
+  $('f-subject').value    = t.subject;
+  $('f-priority').value   = t.priority;
+  $('f-total').value      = t.totalAmount;
+  $('f-unit').value       = t.unit;
+  $('f-startdate').value  = t.startDate || today();
+  $('f-deadline').value   = t.deadline;
+  $('f-memo').value       = t.memo;
+  $('f-repeat').value     = t.repeat || 'none';
   $('f-repeat-end').value = t.repeatEnd || '';
   _selectedDows = new Set((t.repeatDays || []).map(Number));
   onRepeatChange();
@@ -709,7 +721,7 @@ window.closeModal     = () => $('task-modal').classList.add('hidden');
 window.closeModalOnBg = e  => { if (e.target.id === 'task-modal') closeModal(); };
 
 function clearTaskForm() {
-  ['f-title','f-subject','f-total','f-unit','f-deadline','f-memo','f-repeat-end']
+  ['f-title','f-subject','f-total','f-unit','f-startdate','f-deadline','f-memo','f-repeat-end']
     .forEach(id => { const el=$(id); if(el) el.value=''; });
   $('f-priority').value = 'medium';
   $('f-repeat').value   = 'none';
@@ -758,6 +770,7 @@ window.saveTask = function() {
     priority:    $('f-priority').value,
     totalAmount: total,
     unit:        $('f-unit').value.trim(),
+    startDate:   $('f-startdate').value || today(),
     deadline:    deadline || addDays(today(), 365),
     memo:        $('f-memo').value.trim(),
     repeat,
@@ -776,11 +789,12 @@ window.saveTask = function() {
 
 // 分割プレビュー
 function updateSplitPreview() {
-  const total    = Number($('f-total')?.value);
-  const deadline = $('f-deadline')?.value;
-  const unit     = $('f-unit')?.value.trim() ?? '';
-  const repeat   = $('f-repeat')?.value ?? 'none';
-  const preview  = $('split-preview');
+  const total     = Number($('f-total')?.value);
+  const startDate = $('f-startdate')?.value || today();
+  const deadline  = $('f-deadline')?.value;
+  const unit      = $('f-unit')?.value.trim() ?? '';
+  const repeat    = $('f-repeat')?.value ?? 'none';
+  const preview   = $('split-preview');
   if (!preview) return;
 
   if (repeat !== 'none') {
@@ -790,20 +804,29 @@ function updateSplitPreview() {
   }
   if (!total || !deadline) { preview.classList.remove('show'); return; }
 
-  const days  = Math.max(1, daysLeft(deadline) ?? 1);
-  const base  = Math.floor(total / days);
-  const extra = total % days;
-  const chips = Array.from({length:Math.min(days,7)}, (_,i) =>
+  const effectiveStart = startDate > today() ? startDate : today();
+  const spanDays = Math.max(1,
+    Math.ceil((new Date(deadline+'T00:00:00') - new Date(effectiveStart+'T00:00:00')) / 86400000) + 1
+  );
+  const base  = Math.floor(total / spanDays);
+  const extra = total % spanDays;
+
+  // 開始日が未来の場合は表示
+  const startLabel = startDate > today()
+    ? `<span style="color:var(--accent);font-size:12px">開始: ${fmtDate(startDate)} → 締切: ${fmtDate(deadline)}</span>`
+    : `<span style="color:var(--sub);font-size:12px">今日から締切まで</span>`;
+
+  const chips = Array.from({length:Math.min(spanDays,7)}, (_,i) =>
     `<span class="split-chip">${base+(i<extra?1:0)} ${esc(unit)}</span>`).join('');
-  const more  = days > 7 ? `<span class="split-chip">…他 ${days-7} 日</span>` : '';
+  const more  = spanDays > 7 ? `<span class="split-chip">…他 ${spanDays-7} 日</span>` : '';
 
   preview.classList.add('show');
   preview.innerHTML = `
-    <div class="split-title">📅 自動分割プレビュー（${days}日間）</div>
+    <div class="split-title">📅 自動分割プレビュー（${spanDays}日間）${startLabel}</div>
     <div class="split-chips">${chips+more}</div>`;
 }
 
-['f-total','f-deadline','f-unit','f-repeat'].forEach(id => {
+['f-total','f-startdate','f-deadline','f-unit','f-repeat'].forEach(id => {
   const el = $(id); if (el) el.addEventListener('input', updateSplitPreview);
 });
 
@@ -894,28 +917,72 @@ function renderWeekCal(body, title) {
   const saturday = new Date(sunday); saturday.setDate(saturday.getDate() + 6);
   title.textContent = `${fmtDate(sunday.toISOString().slice(0,10))} 〜 ${fmtDate(saturday.toISOString().slice(0,10))}`;
   const todayStr = today();
-  let html = '<div class="cal-day-list">';
+  body.innerHTML = '';
+
+  const list = document.createElement('div');
+  list.className = 'cal-day-list';
+
   for (let i = 0; i < 7; i++) {
     const d       = new Date(sunday); d.setDate(d.getDate() + i);
     const dateStr = d.toISOString().slice(0,10);
     const isToday = dateStr === todayStr;
     const entries = daily.filter(e => e.date === dateStr);
     const dowStr  = DOW_JA[d.getDay()];
-    const taskHtml = entries.length
-      ? entries.map(e => {
-          const t = tasks.find(t => t.id === e.taskId);
-          return `<div class="cal-task-pill${e.status==='completed'?' done':''}" style="border-left-color:${getSubjectColor(t?.subject)}">
-            ${esc(t?.title ?? '')} <span style="color:var(--sub)">${e.plannedAmount} ${esc(t?.unit ?? '')}</span>
-          </div>`;
-        }).join('')
-      : '<div style="color:var(--sub);font-size:12px;padding:4px 0">予定なし</div>';
-    html += `<div class="cal-day-row">
-      <div class="cal-day-label${isToday?' today-label':''}">${m2(d.getMonth()+1)}/${m2(d.getDate())}<br>${dowStr}</div>
-      <div class="cal-day-tasks">${taskHtml}</div>
-    </div>`;
+
+    const row = document.createElement('div');
+    row.className = 'cal-day-row';
+
+    const label = document.createElement('div');
+    label.className = 'cal-day-label' + (isToday ? ' today-label' : '');
+    label.innerHTML = `${m2(d.getMonth()+1)}/${m2(d.getDate())}<br>${dowStr}`;
+    row.appendChild(label);
+
+    const tasksCol = document.createElement('div');
+    tasksCol.className = 'cal-day-tasks cal-drop-zone';
+    tasksCol.dataset.date = dateStr;
+
+    if (entries.length === 0) {
+      tasksCol.innerHTML = '<div class="cal-no-task" style="color:var(--sub);font-size:12px;padding:4px 0">予定なし</div>';
+    } else {
+      entries.forEach(e => {
+        const t = tasks.find(t => t.id === e.taskId);
+        const pill = document.createElement('div');
+        pill.className = 'cal-task-pill' + (e.status==='completed'?' done':'');
+        pill.style.borderLeftColor = getSubjectColor(t?.subject);
+        pill.draggable = true;
+        pill.dataset.dailyId = e.id;
+        pill.innerHTML = `<span class="cal-pill-title">${esc(t?.title ?? '')}</span> <span style="color:var(--sub)">${e.plannedAmount} ${esc(t?.unit ?? '')}</span>`;
+        // ドラッグ開始
+        pill.addEventListener('dragstart', ev => {
+          ev.dataTransfer.setData('text/plain', e.id);
+          ev.dataTransfer.effectAllowed = 'move';
+          pill.style.opacity = '0.4';
+        });
+        pill.addEventListener('dragend', () => { pill.style.opacity = ''; });
+        tasksCol.appendChild(pill);
+      });
+    }
+
+    // ドロップゾーン
+    tasksCol.addEventListener('dragover', ev => {
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = 'move';
+      tasksCol.classList.add('cal-drop-active');
+    });
+    tasksCol.addEventListener('dragleave', () => tasksCol.classList.remove('cal-drop-active'));
+    tasksCol.addEventListener('drop', ev => {
+      ev.preventDefault();
+      tasksCol.classList.remove('cal-drop-active');
+      const dailyId  = ev.dataTransfer.getData('text/plain');
+      const targetDate = tasksCol.dataset.date;
+      moveDailyEntry(dailyId, targetDate);
+    });
+
+    row.appendChild(tasksCol);
+    list.appendChild(row);
   }
-  html += '</div>';
-  body.innerHTML = html;
+
+  body.appendChild(list);
 }
 
 function renderDayCal(body, title) {
@@ -923,23 +990,79 @@ function renderDayCal(body, title) {
   const dowStr  = DOW_JA[calCursor.getDay()];
   title.textContent = `${calCursor.getFullYear()}年${calCursor.getMonth()+1}月${calCursor.getDate()}日（${dowStr}）`;
   const entries = daily.filter(e => e.date === dateStr);
-  let html = '<div class="cal-day-list">';
+  body.innerHTML = '';
+
+  // 日ビューは前後の日へのドロップエリア
+  const navRow = document.createElement('div');
+  navRow.style.cssText = 'display:flex;gap:6px;margin-bottom:10px';
+
+  [-1, 1].forEach(dir => {
+    const targetDate = addDays(dateStr, dir);
+    const zone = document.createElement('div');
+    zone.className = 'cal-day-nav-drop';
+    zone.textContent = dir === -1 ? `← ${fmtDate(targetDate)} に移動` : `${fmtDate(targetDate)} に移動 →`;
+    zone.dataset.date = targetDate;
+    zone.addEventListener('dragover', ev => { ev.preventDefault(); zone.classList.add('cal-drop-active'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('cal-drop-active'));
+    zone.addEventListener('drop', ev => {
+      ev.preventDefault();
+      zone.classList.remove('cal-drop-active');
+      moveDailyEntry(ev.dataTransfer.getData('text/plain'), targetDate);
+    });
+    navRow.appendChild(zone);
+  });
+  body.appendChild(navRow);
+
+  const list = document.createElement('div');
+  list.className = 'cal-day-list';
+
   if (entries.length === 0) {
-    html += '<p style="color:var(--sub);font-size:14px;padding:20px 0">この日の予定はありません</p>';
+    list.innerHTML = '<p style="color:var(--sub);font-size:14px;padding:20px 0">この日の予定はありません</p>';
   } else {
     entries.forEach(e => {
       const t = tasks.find(t => t.id === e.taskId);
-      html += `<div class="cal-task-pill${e.status==='completed'?' done':''}" style="border-left-color:${getSubjectColor(t?.subject)}">
-        <div style="font-weight:600">${esc(t?.title ?? '')}</div>
+      const pill = document.createElement('div');
+      pill.className = 'cal-task-pill' + (e.status==='completed'?' done':'');
+      pill.style.borderLeftColor = getSubjectColor(t?.subject);
+      pill.draggable = true;
+      pill.dataset.dailyId = e.id;
+      pill.innerHTML = `
+        <div style="font-weight:600;display:flex;align-items:center;gap:6px">
+          <span class="cal-drag-handle" title="ドラッグして移動">⠿</span>
+          ${esc(t?.title ?? '')}
+        </div>
         <div style="font-size:12px;color:var(--sub);margin-top:2px">
           ${e.plannedAmount} ${esc(t?.unit ?? '')}
           ${t?.subject ? '— ' + esc(t.subject) : ''}
-        </div>
-      </div>`;
+        </div>`;
+      pill.addEventListener('dragstart', ev => {
+        ev.dataTransfer.setData('text/plain', e.id);
+        ev.dataTransfer.effectAllowed = 'move';
+        pill.style.opacity = '0.4';
+      });
+      pill.addEventListener('dragend', () => { pill.style.opacity = ''; });
+      list.appendChild(pill);
     });
   }
-  html += '</div>';
-  body.innerHTML = html;
+  body.appendChild(list);
+}
+
+// ─── カレンダー ドラッグ＆ドロップ ───────────────────────────
+function moveDailyEntry(dailyId, targetDate) {
+  const entry = daily.find(d => d.id === dailyId);
+  if (!entry || entry.date === targetDate) return;
+  const fromDate = entry.date;
+  entry.date = targetDate;
+  // 完了済みエントリは未完了に戻す（日付変更で再挑戦扱い）
+  if (entry.status === 'completed') {
+    entry.status = 'pending';
+    entry.completedAmount = 0;
+  }
+  saveDaily();
+  recordStats();
+  renderCalendar();
+  renderToday();
+  showToast(`📅 ${fmtDate(fromDate)} → ${fmtDate(targetDate)} に移動しました`);
 }
 
 // ─── 時間割 ──────────────────────────────────────────────────
