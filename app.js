@@ -1065,136 +1065,385 @@ function moveDailyEntry(dailyId, targetDate) {
   showToast(`📅 ${fmtDate(fromDate)} → ${fmtDate(targetDate)} に移動しました`);
 }
 
-// ─── 時間割 ──────────────────────────────────────────────────
-const PERIODS   = ['1限','2限','3限','4限','5限','6限'];
-let   ttRange   = 'weekday';  // 'weekday' | 'all'
-const WEEK_COLS = { weekday:[1,2,3,4,5], all:[0,1,2,3,4,5,6] }; // 0=日
+// ─── 24時間 時間割 ───────────────────────────────────────────
+// データ形式: timetable は { [dow]: [ {id, startH, endH, subject, note} ] }
+// 既存の旧形式（dow-period キー）は無視して新形式のみ使用
 
-window.setTTRange = function(range, btn) {
-  ttRange = range;
-  document.querySelectorAll('.tt-controls .cal-view-btn').forEach(b => b.classList.remove('active'));
-  if (btn) btn.classList.add('active');
-  renderTimetable();
+const TT_HOUR_PX   = 52;   // 1時間あたりのピクセル高さ
+const TT_DAYS      = [0,1,2,3,4,5,6]; // 日〜土
+const TT_HOURS     = Array.from({length:24}, (_,i) => i); // 0〜23
+const TT_NIGHT_HRS = new Set([0,1,2,3,4,5]); // 深夜帯
+
+let _ttCompact    = true;  // 深夜折りたたみ状態
+let _ttDragState  = null;  // { dow, startH, endH, colEl }
+let _ttEditingBlock = null; // 編集中ブロックID
+
+// 時刻 float → "HH:MM" 文字列
+function hToStr(h) {
+  const hh = Math.floor(h), mm = Math.round((h - hh) * 60);
+  return `${m2(hh)}:${m2(mm)}`;
+}
+// "HH:MM" → float
+function strToH(s) {
+  if (!s) return 0;
+  const [hh, mm] = s.split(':').map(Number);
+  return hh + mm / 60;
+}
+
+// timetable を新形式に移行 / 保証
+function getTTBlocks(dow) {
+  if (!Array.isArray(timetable[dow])) timetable[dow] = [];
+  return timetable[dow];
+}
+
+// 深夜折りたたみトグル
+window.toggleTTCompact = function() {
+  _ttCompact = !_ttCompact;
+  const grid = $('tt24-grid');
+  const btn  = $('tt-compact-btn');
+  const lbl  = $('tt-compact-label');
+  if (grid) grid.classList.toggle('compact', _ttCompact);
+  if (btn)  btn.classList.toggle('active', _ttCompact);
+  if (lbl)  lbl.textContent = _ttCompact ? '🌙 深夜を表示' : '🌙 深夜を折りたたむ';
+  // 表示/非表示の切り替え
+  document.querySelectorAll('.tt24-night').forEach(el => {
+    el.style.display = _ttCompact ? 'none' : '';
+  });
 };
 
 function renderTimetable() {
-  const body = $('timetable-body');
-  if (!body) return;
+  const grid = $('tt24-grid');
+  if (!grid) return;
 
   const todayStr = today();
   const todayDow = new Date(todayStr + 'T00:00:00').getDay();
-  const cols     = WEEK_COLS[ttRange];
-  const colCount = cols.length;
 
-  // ヘッダー
-  const headerCols = cols.map(dow => {
-    const isToday = dow === todayDow;
-    return `<div class="tt-head-cell${isToday?' today-col':''}">${DOW_JA[dow]}</div>`;
-  }).join('');
+  grid.innerHTML = '';
 
-  // グリッド行
-  const bodyRows = PERIODS.map((period, pi) => {
-    const cells = cols.map(dow => {
-      const key    = `${dow}-${pi}`;
-      const cell   = timetable[key];
-      const isToday = dow === todayDow;
-      if (cell?.subject) {
-        const color = getSubjectColor(cell.subject);
-        return `<div class="tt-cell filled${isToday?' today-col-cell':''}" style="border-left-color:${color}" onclick="openTTModal('${key}')">
-          <div class="tt-subj" style="color:${color}">${esc(cell.subject)}</div>
-          ${cell.room ? `<div class="tt-room">${esc(cell.room)}</div>` : ''}
-        </div>`;
+  // ─ ヘッダー行 ─
+  const headSpacer = document.createElement('div');
+  headSpacer.className = 'tt24-head-spacer';
+  grid.appendChild(headSpacer);
+
+  TT_DAYS.forEach(dow => {
+    const cell = document.createElement('div');
+    cell.className = 'tt24-head-cell' + (dow === todayDow ? ' tt-today-col' : '');
+    // 今週の日付を計算
+    const now    = new Date(todayStr + 'T00:00:00');
+    const diff   = dow - now.getDay();
+    const date   = new Date(now); date.setDate(date.getDate() + diff);
+    const dateLabel = `${date.getMonth()+1}/${date.getDate()}`;
+    cell.innerHTML = `<span class="tt24-head-dow">${DOW_JA[dow]}</span><span class="tt24-head-date">${dateLabel}</span>`;
+    grid.appendChild(cell);
+  });
+
+  // ─ タイムゾーン行 (grid-row:2 以降) ─
+  // 時刻ラベル列と曜日列を「1つの大きな行」として実装
+  // 各時刻に1行、各曜日に1列のセルを作る方法ではなく、
+  // 各曜日ごとに position:relative のコンテナを置いてブロックを絶対配置する
+
+  // 時刻ラベル列（左端sticky）
+  const totalH = TT_HOUR_PX * 24;
+  const timeColWrap = document.createElement('div');
+  timeColWrap.className = 'tt24-time-label-wrap';
+  timeColWrap.style.height = totalH + 'px';
+
+  TT_HOURS.forEach(h => {
+    const label = document.createElement('div');
+    label.className = 'tt24-time-label' + (TT_NIGHT_HRS.has(h) ? ' tt24-night' : '');
+    if (_ttCompact && TT_NIGHT_HRS.has(h)) label.style.display = 'none';
+    label.style.top = (h * TT_HOUR_PX) + 'px';
+    label.textContent = h === 0 ? '0:00' : `${m2(h)}:00`;
+    timeColWrap.appendChild(label);
+  });
+  grid.appendChild(timeColWrap);
+
+  // 各曜日列
+  TT_DAYS.forEach((dow, colIdx) => {
+    const col = document.createElement('div');
+    col.className = 'tt24-col' + (dow === todayDow ? ' tt-today-col' : '');
+    col.style.cssText = `grid-column:${colIdx+2}; grid-row:2; position:relative; height:${totalH}px; min-height:${totalH}px;`;
+    col.dataset.dow = dow;
+
+    // 水平グリッド線（時刻線）
+    TT_HOURS.forEach(h => {
+      const line = document.createElement('div');
+      line.className = 'tt24-hour-line' + (TT_NIGHT_HRS.has(h) ? ' tt24-night' : '') + (h === 0 ? ' major' : '');
+      if (_ttCompact && TT_NIGHT_HRS.has(h)) line.style.display = 'none';
+      line.style.top = (h * TT_HOUR_PX) + 'px';
+      col.appendChild(line);
+
+      // 30分ライン
+      if (h < 23) {
+        const halfLine = document.createElement('div');
+        halfLine.className = 'tt24-half-line' + (TT_NIGHT_HRS.has(h) ? ' tt24-night' : '');
+        if (_ttCompact && TT_NIGHT_HRS.has(h)) halfLine.style.display = 'none';
+        halfLine.style.top = (h * TT_HOUR_PX + TT_HOUR_PX/2) + 'px';
+        col.appendChild(halfLine);
       }
-      return `<div class="tt-cell empty${isToday?' today-col-cell':''}" onclick="openTTModal('${key}')">＋</div>`;
-    }).join('');
-    return `<div class="tt-body-row" style="display:grid;grid-template-columns:36px repeat(${colCount},1fr);gap:2px;padding:0 4px">
-      <div class="tt-period-cell">${period}</div>${cells}
-    </div>`;
-  }).join('');
+    });
 
-  body.innerHTML = `
-    <div class="timetable-wrap">
-      <div class="tt-header-row" style="display:grid;grid-template-columns:36px repeat(${colCount},1fr);gap:2px">
-        <div></div>${headerCols}
-      </div>
-      ${bodyRows}
-    </div>`;
+    // ブロックを描画
+    getTTBlocks(dow).forEach(block => {
+      col.appendChild(makeTTBlockEl(block, dow));
+    });
 
-  // 今日の授業サマリー
-  renderTodayClasses(todayDow);
+    // 今日の列に現在時刻ライン
+    if (dow === todayDow) {
+      const nowLine = document.createElement('div');
+      nowLine.className = 'tt24-now-line';
+      nowLine.id = `tt-now-line-${dow}`;
+      col.appendChild(nowLine);
+      updateNowLine(nowLine);
+      setInterval(() => updateNowLine(nowLine), 60000);
+    }
+
+    // ─ ドラッグ選択イベント ─
+    let dragPreview = null;
+
+    col.addEventListener('mousedown', ev => {
+      if (ev.target.closest('.tt24-block')) return; // ブロッククリックは除外
+      ev.preventDefault();
+      const h = eventToHour(ev, col);
+      _ttDragState = { dow, startH: snapH(h), endH: snapH(h) + 0.5, colEl: col };
+      dragPreview = document.createElement('div');
+      dragPreview.className = 'tt24-drag-preview';
+      col.appendChild(dragPreview);
+      updateDragPreview(dragPreview, _ttDragState.startH, _ttDragState.endH);
+    });
+
+    col.addEventListener('touchstart', ev => {
+      if (ev.target.closest('.tt24-block')) return;
+      const h = touchToHour(ev, col);
+      _ttDragState = { dow, startH: snapH(h), endH: snapH(h) + 1, colEl: col };
+      dragPreview = document.createElement('div');
+      dragPreview.className = 'tt24-drag-preview';
+      col.appendChild(dragPreview);
+      updateDragPreview(dragPreview, _ttDragState.startH, _ttDragState.endH);
+    }, { passive: true });
+
+    grid.appendChild(col);
+  });
+
+  // mousemove / mouseup はドキュメントレベルで登録（重複防止）
+  if (!window._ttDragListenersAdded) {
+    document.addEventListener('mousemove', onTTDragMove);
+    document.addEventListener('mouseup',   onTTDragEnd);
+    document.addEventListener('touchmove', onTTTouchMove, { passive: false });
+    document.addEventListener('touchend',  onTTDragEnd);
+    window._ttDragListenersAdded = true;
+  }
+
+  // 現在時刻ラインを1分毎更新（ページ遷移後も動作）
   renderTTLegend();
+  renderTTTodayStrip();
+
+  // compact状態を適用
+  if (_ttCompact) grid.classList.add('compact');
+
+  // スクロール位置を朝6時に合わせる
+  const wrap = $('tt24-scroll-wrap');
+  if (wrap) setTimeout(() => { wrap.scrollTop = 5 * TT_HOUR_PX; }, 50);
 }
 
-function renderTodayClasses(todayDow) {
-  const container = $('tt-today-classes');
-  if (!container) return;
-
-  const todayClasses = PERIODS.map((period, pi) => {
-    const key  = `${todayDow}-${pi}`;
-    const cell = timetable[key];
-    return cell?.subject ? { period, ...cell, pi } : null;
-  }).filter(Boolean);
-
-  if (todayClasses.length === 0) { container.innerHTML = ''; return; }
-
-  container.innerHTML = `
-    <div class="tt-today-title">今日の授業</div>
-    <div class="tt-today-list">
-      ${todayClasses.map(c => {
-        const color = getSubjectColor(c.subject);
-        return `<div class="tt-today-pill" style="border-left-color:${color}">
-          <span class="tt-today-period">${c.pi+1}限</span>
-          <span class="tt-today-subj" style="color:${color}">${esc(c.subject)}</span>
-          ${c.room ? `<span class="tt-today-room">${esc(c.room)}</span>` : ''}
-        </div>`;
-      }).join('')}
-    </div>`;
+function updateNowLine(el) {
+  const now  = new Date();
+  const h    = now.getHours() + now.getMinutes() / 60;
+  el.style.top = (h * TT_HOUR_PX) + 'px';
 }
+
+function eventToHour(ev, col) {
+  const rect   = col.getBoundingClientRect();
+  const wrap   = $('tt24-scroll-wrap');
+  const scroll = wrap ? wrap.scrollTop : 0;
+  return (ev.clientY - rect.top + scroll) / TT_HOUR_PX;
+}
+function touchToHour(ev, col) {
+  const rect   = col.getBoundingClientRect();
+  const wrap   = $('tt24-scroll-wrap');
+  const scroll = wrap ? wrap.scrollTop : 0;
+  return (ev.touches[0].clientY - rect.top + scroll) / TT_HOUR_PX;
+}
+function snapH(h) {
+  return Math.round(clamp(h, 0, 23.5) * 4) / 4; // 15分スナップ
+}
+
+function updateDragPreview(el, startH, endH) {
+  const top = startH * TT_HOUR_PX;
+  const h   = Math.max(endH - startH, 0.25) * TT_HOUR_PX;
+  el.style.top    = top + 'px';
+  el.style.height = h   + 'px';
+}
+
+function onTTDragMove(ev) {
+  if (!_ttDragState) return;
+  const { startH, colEl } = _ttDragState;
+  const h = eventToHour(ev, colEl);
+  _ttDragState.endH = Math.max(snapH(h), startH + 0.25);
+  const preview = colEl.querySelector('.tt24-drag-preview');
+  if (preview) updateDragPreview(preview, startH, _ttDragState.endH);
+}
+function onTTTouchMove(ev) {
+  if (!_ttDragState) return;
+  ev.preventDefault();
+  const { startH, colEl } = _ttDragState;
+  const h = touchToHour(ev, colEl);
+  _ttDragState.endH = Math.max(snapH(h), startH + 0.5);
+  const preview = colEl.querySelector('.tt24-drag-preview');
+  if (preview) updateDragPreview(preview, startH, _ttDragState.endH);
+}
+function onTTDragEnd(ev) {
+  if (!_ttDragState) return;
+  const { dow, startH, endH, colEl } = _ttDragState;
+  _ttDragState = null;
+
+  // プレビュー除去
+  colEl.querySelector('.tt24-drag-preview')?.remove();
+
+  const span = endH - startH;
+  if (span < 0.2) return; // 短すぎる選択は無視
+
+  // モーダルを開く（新規作成）
+  _ttEditingBlock = null;
+  openTTBlockModal(dow, startH, endH, null);
+}
+
+// ブロック要素を生成
+function makeTTBlockEl(block, dow) {
+  const color   = getSubjectColor(block.subject);
+  const top     = block.startH * TT_HOUR_PX;
+  const height  = Math.max((block.endH - block.startH) * TT_HOUR_PX, 16);
+  const el      = document.createElement('div');
+  el.className  = 'tt24-block';
+  el.style.cssText = `top:${top}px; height:${height}px; border-left-color:${color}; background:${color}1A; color:${color};`;
+  el.dataset.blockId = block.id;
+
+  const showTime = height > 30;
+  el.innerHTML = `
+    <div class="tt24-block-title">${esc(block.subject)}</div>
+    ${showTime ? `<div class="tt24-block-time">${hToStr(block.startH)}–${hToStr(block.endH)}</div>` : ''}`;
+
+  el.addEventListener('click', ev => {
+    ev.stopPropagation();
+    _ttEditingBlock = block.id;
+    openTTBlockModal(dow, block.startH, block.endH, block);
+  });
+  return el;
+}
+
+// ブロック追加/編集モーダルを開く
+function openTTBlockModal(dow, startH, endH, block) {
+  $('tt-modal-title').textContent = block ? '予定を編集' : '予定を追加';
+  $('tt-block-dow').value   = dow;
+  $('tt-block-id').value    = block ? block.id : '';
+  $('tt-start-time').value  = hToStr(startH);
+  $('tt-end-time').value    = hToStr(endH);
+  $('tt-subject').value     = block?.subject || '';
+  $('tt-room').value        = block?.note    || '';
+  $('tt-delete-btn').style.display = block ? '' : 'none';
+  updateTTTimeDisplay();
+  onTTSubjectInput();
+  updateSubjectDatalist();
+  $('tt-modal').classList.remove('hidden');
+  setTimeout(() => $('tt-subject')?.focus(), 60);
+}
+function updateTTTimeDisplay() {
+  const s = $('tt-start-time')?.value;
+  const e = $('tt-end-time')?.value;
+  const disp = $('tt-time-display');
+  if (!disp) return;
+  if (s && e) {
+    const sh = strToH(s), eh = strToH(e);
+    const dur = eh - sh;
+    const h = Math.floor(dur), min = Math.round((dur - h) * 60);
+    disp.textContent = `${s} – ${e}　(${h > 0 ? h + '時間' : ''}${min > 0 ? min + '分' : ''})`;
+  } else {
+    disp.textContent = '時刻を設定';
+  }
+}
+
+window.onTTTimeChange = function() { updateTTTimeDisplay(); };
+window.closeTTModal     = () => { $('tt-modal').classList.add('hidden'); _ttEditingBlock = null; };
+window.closeTTModalOnBg = e  => { if (e.target.id === 'tt-modal') closeTTModal(); };
+window.onTTSubjectInput = function() {
+  const name  = $('tt-subject')?.value.trim();
+  const color = name ? getSubjectColor(name) : 'var(--border)';
+  if ($('tt-subject-dot')) $('tt-subject-dot').style.background = color;
+};
+window.saveTTBlock = function() {
+  const dow     = Number($('tt-block-dow').value);
+  const blockId = $('tt-block-id').value;
+  const startH  = strToH($('tt-start-time').value);
+  const endH    = strToH($('tt-end-time').value);
+  const subject = $('tt-subject').value.trim();
+  const note    = $('tt-room').value.trim();
+
+  if (!subject) { shakeInput('tt-subject'); return; }
+  if (endH <= startH) { shakeInput('tt-end-time'); showToast('❌ 終了は開始より後にしてください'); return; }
+
+  const blocks = getTTBlocks(dow);
+  if (blockId) {
+    const idx = blocks.findIndex(b => b.id === blockId);
+    if (idx >= 0) Object.assign(blocks[idx], { startH, endH, subject, note });
+  } else {
+    blocks.push({ id: uid(), startH, endH, subject, note });
+  }
+  if (subject) getSubjectColor(subject);
+  saveTimetable(); closeTTModal(); renderTimetable();
+  showToast('🗓️ 時間割を更新しました');
+};
+window.deleteTTBlock = function() {
+  const dow     = Number($('tt-block-dow').value);
+  const blockId = $('tt-block-id').value;
+  if (!blockId) return;
+  timetable[dow] = (timetable[dow] || []).filter(b => b.id !== blockId);
+  saveTimetable(); closeTTModal(); renderTimetable();
+  showToast('🗑️ 削除しました');
+};
 
 function renderTTLegend() {
   const legend = $('tt-legend');
   if (!legend) return;
   const subjects = new Set();
-  Object.values(timetable).forEach(c => { if (c?.subject) subjects.add(c.subject); });
+  Object.values(timetable).forEach(arr => {
+    if (Array.isArray(arr)) arr.forEach(b => { if (b?.subject) subjects.add(b.subject); });
+  });
+  if (subjects.size === 0) { legend.innerHTML = ''; return; }
   legend.innerHTML = [...subjects].map(s => `
     <div class="tt-legend-item">
       <div class="tt-legend-dot" style="background:${getSubjectColor(s)}"></div>${esc(s)}
     </div>`).join('');
 }
 
-// 時間割セルモーダル
-window.openTTModal = function(key) {
-  const [dow, pi] = key.split('-');
-  const cell = timetable[key] || {};
-  $('tt-cell-key').value   = key;
-  $('tt-subject').value    = cell.subject || '';
-  $('tt-room').value       = cell.room    || '';
-  $('tt-modal-title').textContent = `${DOW_JA[dow]} ${PERIODS[pi]}`;
-  onTTSubjectInput();
-  $('tt-modal').classList.remove('hidden');
-  setTimeout(() => $('tt-subject')?.focus(), 60);
-};
-window.closeTTModal     = () => $('tt-modal').classList.add('hidden');
-window.closeTTModalOnBg = e  => { if (e.target.id === 'tt-modal') closeTTModal(); };
-window.onTTSubjectInput = function() {
-  const name  = $('tt-subject').value.trim();
-  const color = name ? getSubjectColor(name) : 'var(--border)';
-  if ($('tt-subject-dot')) $('tt-subject-dot').style.background = color;
-};
-window.saveTTCell = function() {
-  const key     = $('tt-cell-key').value;
-  const subject = $('tt-subject').value.trim();
-  const room    = $('tt-room').value.trim();
-  if (subject) { timetable[key] = { subject, room }; getSubjectColor(subject); }
-  else         { delete timetable[key]; }
-  saveTimetable(); closeTTModal(); renderTimetable();
-  showToast('🗓️ 時間割を更新しました');
-};
-window.deleteTTCell = function() {
-  delete timetable[$('tt-cell-key').value];
-  saveTimetable(); closeTTModal(); renderTimetable();
-  showToast('🗑️ 削除しました');
-};
+function renderTTTodayStrip() {
+  const strip  = $('tt24-today-strip');
+  if (!strip) return;
+  const todayDow = new Date(today() + 'T00:00:00').getDay();
+  const blocks   = getTTBlocks(todayDow)
+    .slice()
+    .sort((a,b) => a.startH - b.startH);
+
+  if (blocks.length === 0) { strip.innerHTML = ''; return; }
+  strip.innerHTML = `<div class="tt24-today-title">今日のスケジュール</div>`;
+  blocks.forEach(b => {
+    const color = getSubjectColor(b.subject);
+    const pill  = document.createElement('div');
+    pill.className = 'tt24-today-pill';
+    pill.style.borderLeftColor = color;
+    pill.innerHTML = `
+      <span class="tt24-today-pill-time">${hToStr(b.startH)} – ${hToStr(b.endH)}</span>
+      <span class="tt24-today-pill-subj" style="color:${color}">${esc(b.subject)}</span>
+      ${b.note ? `<span class="tt24-today-pill-room">${esc(b.note)}</span>` : ''}`;
+    strip.appendChild(pill);
+  });
+}
+
+// 旧setTTRange互換（HTML呼び出し残骸対応）
+window.setTTRange = function() {};
+// TTモーダルの openTTModal 旧互換
+window.openTTModal = function(key) {};
+window.saveTTCell  = function() {};
+window.deleteTTCell= function() {};
 
 // ─── 統計 ────────────────────────────────────────────────────
 let statPeriod = 'today';

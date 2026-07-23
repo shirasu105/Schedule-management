@@ -251,49 +251,340 @@ select {
 }
 .cal-task-pill.done { opacity:.5; text-decoration:line-through }
 
-/* === 時間割 === */
-.tt-controls { display:flex; gap:4px; background:var(--bg3); border-radius:8px; padding:3px }
-.timetable-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; border-radius:var(--r) }
-.tt-grid { display:grid; gap:2px; min-width:320px }
-.tt-header-row {
-  display:grid; gap:2px; margin-bottom:2px;
-  background:var(--bg2); border-radius:var(--r) var(--r) 0 0; padding:6px 4px 4px;
+/* ============================================================
+   24時間 時間割グリッド — リニューアル
+   ============================================================ */
+
+/* ツールバー */
+.tt24-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
 }
-.tt-head-cell { text-align:center; font-size:11px; font-weight:700; color:var(--sub); padding:2px }
-.tt-head-cell.today-col { color:var(--accent) }
-.tt-head-date { font-size:10px; font-weight:400; opacity:.7; display:block }
-.tt-body-row { display:grid; gap:2px; padding:0 4px }
-.tt-period-cell {
-  display:flex; align-items:center; justify-content:center;
-  font-size:11px; font-weight:700; color:var(--sub);
-  padding:4px 0; white-space:nowrap;
+.tt24-toolbar-left { display:flex; align-items:center; gap:8px; }
+.tt24-toolbar-right { display:flex; align-items:center; gap:6px; flex:1; justify-content:flex-end; flex-wrap:wrap; }
+
+.tt24-compact-btn {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sub);
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  transition: all .15s;
+  white-space: nowrap;
 }
-.tt-cell {
-  min-height:58px; border-radius:8px; border:1px solid var(--border);
-  background:var(--bg2); cursor:pointer; display:flex; flex-direction:column;
-  align-items:center; justify-content:center; padding:5px 4px;
-  text-align:center; transition:all .15s; font-size:12px; position:relative;
+.tt24-compact-btn:hover { border-color: var(--accent); color: var(--accent); }
+.tt24-compact-btn.active { background: var(--accent); border-color: var(--accent); color: #060A12; }
+
+/* 凡例（インライン） */
+.tt-legend-inline { display:flex; gap:8px; flex-wrap:wrap; }
+.tt-legend-item {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 600; color: var(--sub);
+  padding: 3px 10px; border-radius: 20px;
+  border: 1px solid var(--border); background: var(--bg2);
 }
-.tt-cell:hover { border-color:var(--accent); background:var(--bg3) }
-.tt-cell.filled { border-left-width:3px }
-.tt-cell.today-col-cell { background:rgba(56,189,248,.05) }
-.tt-cell.empty { color:var(--border); font-size:20px }
-.tt-subj { font-weight:700; font-size:12px; line-height:1.3; word-break:break-all }
-.tt-room { font-size:10px; color:var(--sub); margin-top:2px }
-.tt-today-classes { margin-top:16px }
-.tt-today-title { font-size:13px; font-weight:700; color:var(--sub); text-transform:uppercase; letter-spacing:.06em; margin-bottom:8px }
-.tt-today-list { display:flex; flex-direction:column; gap:6px }
-.tt-today-pill {
-  display:flex; align-items:center; gap:10px; background:var(--bg2);
-  border:1px solid var(--border); border-radius:10px; padding:10px 14px;
-  border-left:3px solid transparent;
+.tt-legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink:0; }
+
+/* スクロールラッパー — 縦横スクロール対応 */
+.tt24-scroll-wrap {
+  overflow-x: auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 16px;
+  max-height: 70dvh;   /* 画面高さの70%でクリップ */
+  box-shadow: 0 0 0 1px var(--border), 0 8px 40px rgba(0,0,0,.35);
+  position: relative;
 }
-.tt-today-period { font-size:12px; color:var(--sub); font-weight:600; min-width:24px }
-.tt-today-subj   { font-size:14px; font-weight:700; flex:1 }
-.tt-today-room   { font-size:12px; color:var(--sub) }
+
+/* グリッド本体 */
+.tt24-grid {
+  display: grid;
+  grid-template-columns: 44px repeat(7, minmax(72px, 1fr));
+  grid-template-rows: auto 1fr;
+  min-width: 560px;
+  background: var(--bg2);
+  border-radius: 16px;
+  overflow: visible;   /* 子要素のstickyを有効にするためvisible */
+  position: relative;
+  font-size: 12px;
+}
+
+/* 曜日ヘッダー行 — スクロール内でstickyにするため.tt24-scroll-wrapを親にする */
+.tt24-head-spacer {
+  background: var(--bg2);
+  border-bottom: 1px solid rgba(255,255,255,.06);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  grid-column: 1;
+  grid-row: 1;
+  /* 左の時刻列もstickyで固定 */
+  left: 0;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.tt24-head-cell {
+  background: rgba(30,41,59,.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255,255,255,.06);
+  border-left: 1px solid rgba(255,255,255,.04);
+  text-align: center;
+  padding: 12px 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--sub);
+  letter-spacing: .04em;
+  position: sticky;
+  top: 0;
+  grid-row: 1;
+  z-index: 15;
+  user-select: none;
+  transition: color .15s, background .15s;
+}
+.tt24-head-cell.tt-today-col {
+  color: var(--accent);
+  background: rgba(56,189,248,.06);
+}
+.tt24-head-dow  { font-size: 14px; font-weight: 800; display: block; }
+.tt24-head-date { font-size: 10px; opacity: .55; display: block; margin-top: 2px; }
+
+/* 時刻ラベルコンテナ — 左列sticky */
+.tt24-time-label-wrap {
+  grid-column: 1;
+  grid-row: 2;
+  position: sticky;
+  left: 0;
+  z-index: 12;
+  background: var(--bg2);
+  border-right: 1px solid rgba(255,255,255,.05);
+}
+.tt24-time-label {
+  position: absolute;
+  right: 8px;
+  left: 0;
+  text-align: right;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--sub);
+  opacity: .45;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .03em;
+  transform: translateY(-7px);
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+}
+
+/* 曜日ごとの列コンテナ */
+.tt24-col {
+  grid-row: 2;
+  border-left: 1px solid rgba(255,255,255,.04);
+  position: relative;
+  cursor: crosshair;
+  transition: background .15s;
+}
+.tt24-col.tt-today-col {
+  background: rgba(56,189,248,.028);
+  box-shadow: inset 0 0 0 1px rgba(56,189,248,.08);
+}
+.tt24-col:hover { background: rgba(255,255,255,.018); }
+.tt24-col.tt-today-col:hover { background: rgba(56,189,248,.055); }
+
+/* 時間ライン（水平） */
+.tt24-hour-line {
+  position: absolute;
+  left: 0; right: 0;
+  height: 1px;
+  background: rgba(255,255,255,.06);
+  pointer-events: none;
+}
+.tt24-hour-line.major { background: rgba(255,255,255,.1); }
+.tt24-half-line {
+  position: absolute;
+  left: 0; right: 0;
+  height: 1px;
+  background: rgba(255,255,255,.025);
+  pointer-events: none;
+}
+
+/* ブロック（イベント） — 高級ガラス仕上げ */
+.tt24-block {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  border-radius: 10px;
+  border-left: 3px solid transparent;
+  border-top: 1px solid rgba(255,255,255,.12);
+  padding: 6px 9px 5px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+  overflow: hidden;
+  cursor: pointer;
+  transition: filter .18s, transform .14s, box-shadow .18s;
+  z-index: 2;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 2px 8px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.06);
+}
+.tt24-block:hover {
+  filter: brightness(1.15) saturate(1.1);
+  transform: scale(1.018);
+  box-shadow: 0 6px 24px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.1);
+  z-index: 3;
+}
+.tt24-block:active { transform: scale(.99); }
+.tt24-block-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 800;
+  font-size: 11.5px;
+  letter-spacing: .01em;
+}
+.tt24-block-time {
+  font-size: 9.5px;
+  font-weight: 500;
+  opacity: .6;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .02em;
+}
+
+/* 選択ドラッグオーバーレイ */
+.tt24-drag-preview {
+  position: absolute;
+  left: 3px; right: 3px;
+  border-radius: 10px;
+  background: linear-gradient(160deg, rgba(99,102,241,.22), rgba(6,182,212,.18));
+  border: 1.5px dashed rgba(129,140,248,.75);
+  pointer-events: none;
+  z-index: 5;
+  transition: none;
+  box-shadow: 0 0 0 1px rgba(99,102,241,.15) inset;
+  backdrop-filter: blur(4px);
+}
+
+/* 現在時刻ライン */
+.tt24-now-line {
+  position: absolute;
+  left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, #F87171 20%, #F87171 100%);
+  z-index: 4;
+  pointer-events: none;
+}
+.tt24-now-line::before {
+  content: '';
+  position: absolute;
+  left: 0; top: -3px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #F87171;
+  box-shadow: 0 0 0 2px rgba(248,113,113,.3), 0 0 12px rgba(248,113,113,.5);
+}
+
+/* 今日スタイル下部ストリップ */
+.tt24-today-strip {
+  margin-top: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tt24-today-pill {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg2);
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 12px;
+  padding: 11px 16px;
+  border-left: 3px solid transparent;
+  font-size: 13px;
+  transition: background .15s, box-shadow .15s;
+}
+.tt24-today-pill:hover {
+  background: var(--bg3);
+  box-shadow: 0 2px 12px rgba(0,0,0,.2);
+}
+.tt24-today-pill-time {
+  font-size: 11px; font-weight: 700; color: var(--sub);
+  min-width: 88px; font-variant-numeric: tabular-nums;
+  letter-spacing: .02em;
+}
+.tt24-today-pill-subj { font-weight: 700; flex: 1; font-size: 14px; }
+.tt24-today-pill-room { font-size: 11px; color: var(--sub); }
+.tt24-today-title {
+  font-size: 10px; font-weight: 800; color: var(--sub);
+  letter-spacing: .12em; text-transform: uppercase;
+  margin-bottom: 8px;
+  padding: 0 2px;
+  opacity: .7;
+}
+
+/* モーダル内の時間表示 */
+.tt24-time-display {
+  background: linear-gradient(135deg, rgba(99,102,241,.18), rgba(6,182,212,.12));
+  border: 1px solid rgba(129,140,248,.35);
+  border-radius: 14px;
+  padding: 14px 16px;
+  font-size: 20px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .04em;
+  color: #A5B4FC;
+  text-align: center;
+  margin-bottom: 8px;
+  box-shadow: 0 0 0 1px rgba(99,102,241,.08) inset, 0 4px 20px rgba(99,102,241,.1);
+}
+
+/* 深夜折りたたみ時 */
+.tt24-grid.compact .tt24-night-zone { display: none; }
+
+/* ライトテーマ対応 */
+[data-theme="light"] .tt24-head-cell {
+  background: rgba(248,250,252,.95);
+}
+[data-theme="light"] .tt24-head-spacer {
+  background: rgba(248,250,252,.95);
+}
+[data-theme="light"] .tt24-hour-line {
+  background: rgba(0,0,0,.07);
+}
+[data-theme="light"] .tt24-hour-line.major {
+  background: rgba(0,0,0,.14);
+}
+[data-theme="light"] .tt24-half-line {
+  background: rgba(0,0,0,.035);
+}
+[data-theme="light"] .tt24-col {
+  border-left-color: rgba(0,0,0,.06);
+}
+[data-theme="light"] .tt24-col.tt-today-col {
+  background: rgba(2,132,199,.04);
+  box-shadow: inset 0 0 0 1px rgba(2,132,199,.1);
+}
+[data-theme="light"] .tt24-block {
+  border-top-color: rgba(255,255,255,.6);
+  box-shadow: 0 2px 8px rgba(0,0,0,.1), inset 0 1px 0 rgba(255,255,255,.5);
+}
+[data-theme="light"] .tt24-time-label-wrap {
+  background: var(--bg2);
+}
+[data-theme="light"] .tt24-time-display {
+  color: var(--accent2);
+}
+
+/* === 旧時間割クラス（後方互換） === */
 .tt-legend { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px }
-.tt-legend-item { display:flex; align-items:center; gap:5px; font-size:12px; color:var(--sub) }
-.tt-legend-dot  { width:10px; height:10px; border-radius:50%; flex-shrink:0 }
+.tt-today-classes { margin-top:16px }
 
 /* === 統計 === */
 .stats-period-toggle { display:flex; gap:6px; margin-bottom:20px; background:var(--bg3); border-radius:10px; padding:4px }
@@ -611,14 +902,7 @@ kbd {
 }
 .task-group-header:first-child { padding-top: 0; }
 
-/* === 空の時間割セルのホバーテキスト === */
-.tt-cell.empty:hover::after {
-  content: 'タップして追加';
-  font-size: 10px;
-  color: var(--accent);
-  display: block;
-  margin-top: 3px;
-}
+/* 旧時間割クラス削除済み */
 
 /* === PWAインストールバナー === */
 .pwa-banner {

@@ -132,15 +132,20 @@
 
       <!-- 時間割ビュー -->
       <div id="timetable-section" class="hidden">
-        <div class="cal-sub-header">
-          <div class="cal-view-toggle">
-            <button class="cal-view-btn active" onclick="setTTRange('weekday',this)">月〜金</button>
-            <button class="cal-view-btn" onclick="setTTRange('all',this)">全曜日</button>
+        <div class="tt24-toolbar">
+          <div class="tt24-toolbar-left">
+            <button class="tt24-compact-btn" id="tt-compact-btn" onclick="toggleTTCompact()" title="深夜時間を折りたたむ">
+              <span id="tt-compact-label">🌙 深夜を折りたたむ</span>
+            </button>
+          </div>
+          <div class="tt24-toolbar-right">
+            <div class="tt-legend-inline" id="tt-legend"></div>
           </div>
         </div>
-        <div id="timetable-body"></div>
-        <div class="tt-today-classes" id="tt-today-classes"></div>
-        <div class="tt-legend" id="tt-legend"></div>
+        <div class="tt24-scroll-wrap" id="tt24-scroll-wrap">
+          <div class="tt24-grid" id="tt24-grid"></div>
+        </div>
+        <div class="tt24-today-strip" id="tt24-today-strip"></div>
       </div>
     </section>
 
@@ -377,31 +382,43 @@
     </div>
   </div>
 
-  <!-- 時間割セル -->
+  <!-- 時間割ブロック編集モーダル -->
   <div class="modal-overlay hidden" id="tt-modal" onclick="closeTTModalOnBg(event)">
     <div class="modal">
       <div class="modal-header">
-        <h2 id="tt-modal-title">授業を設定</h2>
+        <h2 id="tt-modal-title">予定を追加</h2>
         <button class="btn-icon" onclick="closeTTModal()">✕</button>
       </div>
       <div class="modal-body">
-        <input type="hidden" id="tt-cell-key">
+        <input type="hidden" id="tt-block-id">
+        <input type="hidden" id="tt-block-dow">
+        <div class="tt24-time-display" id="tt-time-display"></div>
+        <div class="field-row">
+          <div class="field-group">
+            <label>開始時刻</label>
+            <input type="time" id="tt-start-time" oninput="onTTTimeChange()">
+          </div>
+          <div class="field-group">
+            <label>終了時刻</label>
+            <input type="time" id="tt-end-time" oninput="onTTTimeChange()">
+          </div>
+        </div>
         <div class="field-group">
-          <label>科目名</label>
+          <label>内容</label>
           <div class="subject-input-wrap">
-            <input type="text" id="tt-subject" list="subject-datalist" placeholder="例：数学" autocomplete="off" oninput="onTTSubjectInput()">
+            <input type="text" id="tt-subject" list="subject-datalist" placeholder="例：数学・睡眠・昼食" autocomplete="off" oninput="onTTSubjectInput()">
             <span class="subject-color-dot" id="tt-subject-dot"></span>
           </div>
         </div>
         <div class="field-group">
-          <label>教室・備考</label>
+          <label>メモ（教室・備考）</label>
           <input type="text" id="tt-room" placeholder="例：3A教室">
         </div>
       </div>
       <div class="modal-footer">
         <button class="btn-secondary" onclick="closeTTModal()">キャンセル</button>
-        <button class="btn-danger" onclick="deleteTTCell()">削除</button>
-        <button class="btn-primary" onclick="saveTTCell()">保存</button>
+        <button class="btn-danger" id="tt-delete-btn" onclick="deleteTTBlock()" style="display:none">削除</button>
+        <button class="btn-primary" onclick="saveTTBlock()">保存</button>
       </div>
     </div>
   </div>
